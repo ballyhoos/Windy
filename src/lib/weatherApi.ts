@@ -128,10 +128,16 @@ const BOM_NEAREST_STATION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 function bomFetchUrl(url: string): string {
   const parsed = new URL(url);
+  if (import.meta.env.PROD) {
+    return url;
+  }
   return `/bom-proxy${parsed.pathname}${parsed.search}`;
 }
 
 function bomApiFetchUrl(path: string): string {
+  if (import.meta.env.PROD) {
+    return `https://api.weather.bom.gov.au${path}`;
+  }
   return `/bom-api${path}`;
 }
 
