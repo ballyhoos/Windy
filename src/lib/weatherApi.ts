@@ -97,6 +97,26 @@ type BomThreeHourlyForecastPayload = {
   }>;
 };
 
+type BomLocationObservationPayload = {
+  data?: {
+    temp?: number | string | null;
+    wind?: {
+      speed_kilometre?: number | string | null;
+      speed_knot?: number | string | null;
+      direction?: string | null;
+    };
+    gust?: {
+      speed_kilometre?: number | string | null;
+      speed_knot?: number | string | null;
+    };
+    station?: {
+      name?: string;
+      distance?: number | string | null;
+      bom_id?: string | number | null;
+    };
+  };
+};
+
 type BomObservationJsonPayload = {
   observations?: {
     header?: Array<{
@@ -683,6 +703,10 @@ function buildBomForecastWeatherPayload(
 
 async function fetchBomObservedWind(location: LocationOption): Promise<BomObservedWind | null> {
   try {
+    if (import.meta.env.PROD) {
+      return await fetchBomApiObservedWind(location);
+    }
+
     const nearestStation = await resolveNearestBomStationCandidate(location);
     if (nearestStation) {
       const observedFromNearest = await fetchBomObservedWindFromJsonUrl(nearestStation.url);
@@ -698,6 +722,62 @@ async function fetchBomObservedWind(location: LocationOption): Promise<BomObserv
   } catch {
     return null;
   }
+}
+
+async function fetchBomApiObservedWind(location: LocationOption): Promise<BomObservedWind | null> {
+  const stateCode =
+    normalizeAustralianStateCode(location.region) ??
+    inferAustralianStateFromCoordinates(location.latitude, location.longitude);
+  if (!stateCode) {
+    return null;
+  }
+
+  const bomLocation = await resolveBomForecastLocation(location, stateCode);
+  if (!bomLocation?.geohash) {
+    return null;
+  }
+
+  const modifiedGeohash = bomLocation.geohash.slice(0, -1);
+  const response = await fetch(bomApiFetchUrl(`/v1/locations/${modifiedGeohash}/observations`));
+  if (!response.ok) {
+    return null;
+  }
+
+  const payload = (await response.json()) as BomLocationObservationPayload;
+  const observation = payload.data;
+  if (!observation?.wind) {
+    return null;
+  }
+
+  const speedKmh = firstDefinedNumber(
+    parseMaybeNumber(observation.wind.speed_kilometre === undefined ? undefined : String(observation.wind.speed_kilometre)),
+    parseMaybeNumber(observation.wind.speed_knot === undefined ? undefined : String(observation.wind.speed_knot)) === null
+      ? null
+      : roundToTenths((parseMaybeNumber(String(observation.wind.speed_knot)) ?? 0) * 1.852),
+  );
+  const gustKmh = firstDefinedNumber(
+    parseMaybeNumber(observation.gust?.speed_kilometre === undefined ? undefined : String(observation.gust.speed_kilometre)),
+    parseMaybeNumber(observation.gust?.speed_knot === undefined ? undefined : String(observation.gust.speed_knot)) === null
+      ? null
+      : roundToTenths((parseMaybeNumber(String(observation.gust?.speed_knot)) ?? 0) * 1.852),
+  );
+  const direction = extractCardinal(observation.wind.direction ?? '');
+
+  if (speedKmh === null && direction === null) {
+    return null;
+  }
+
+  return {
+    speedKmh,
+    gustKmh,
+    directionDegrees:
+      direction === null || direction === 'CALM' || direction === 'VRB'
+        ? null
+        : cardinalToDegrees(direction),
+    cardinal: direction === null || direction === 'CALM' || direction === 'VRB' ? 'Calm' : direction,
+    airTempC: parseMaybeNumber(observation.temp === undefined ? undefined : String(observation.temp)),
+    sourceLabel: observation.station?.name?.trim() || 'BOM location observation',
+  };
 }
 
 async function resolveNearestBomStationCandidate(
