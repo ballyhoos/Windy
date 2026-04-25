@@ -1,0 +1,105 @@
+export type DecisionStatus = 'green' | 'amber' | 'red';
+export type ShoreRelation = 'onshore' | 'offshore' | 'cross-shore' | 'variable';
+export type TideState = 'incoming' | 'outgoing' | 'slack' | 'unknown';
+export type WarningSeverity = 'watch' | 'warning' | 'severe';
+
+export interface LocationOption {
+  id: string;
+  name: string;
+  latitude: number;
+  longitude: number;
+  region?: string;
+}
+
+export interface WarningInfo {
+  title: string;
+  severity: WarningSeverity;
+  active: boolean;
+}
+
+export interface ForecastWindow {
+  summary: string;
+  thunderstormRisk: 'none' | 'low' | 'moderate' | 'high';
+  weatherChangingSoon: boolean;
+}
+
+export interface WindCondition {
+  speedKmh: number | null;
+  gustKmh: number | null;
+  directionDegrees: number | null;
+  cardinal: string;
+  shoreRelation: ShoreRelation;
+}
+
+export interface MarineHourlyPoint {
+  timestamp: string;
+  windSpeedKmh: number | null;
+  windGustKmh: number | null;
+  windDirectionDegrees: number | null;
+  isWindForecastPoint?: boolean;
+  airTempC: number | null;
+  waterTempC: number | null;
+  swellHeightM: number | null;
+  visibilityKm: number | null;
+  weatherCode: number | null;
+}
+
+export interface MarineConditionSet {
+  location: LocationOption;
+  wind: WindCondition;
+  airTempC: number | null;
+  waterTempC: number | null;
+  swellHeightM: number | null;
+  visibilityKm: number | null;
+  warnings: WarningInfo[];
+  forecast: ForecastWindow;
+  roughWater: boolean;
+  sourceLabel: string;
+  forecastSourceLabel: string;
+  hourly: MarineHourlyPoint[];
+}
+
+export interface TideCondition {
+  nextHigh: string | null;
+  nextLow: string | null;
+  state: TideState;
+  currentRisk: 'low' | 'moderate' | 'high';
+  note: string;
+  sourceLabel: string;
+}
+
+export interface SunCondition {
+  sunrise: string | null;
+  sunset: string | null;
+  daylightRemainingMinutes: number | null;
+  safeReturnBufferMinutes: number;
+  sourceLabel: string;
+}
+
+export interface PaddleConditions {
+  marine: MarineConditionSet;
+  tide: TideCondition;
+  sun: SunCondition;
+  updatedAt: string;
+  isMock: boolean;
+}
+
+export interface DecisionReason {
+  label: string;
+  severity: DecisionStatus;
+}
+
+export interface DecisionResult {
+  status: DecisionStatus;
+  title: string;
+  sentence: string;
+  reasons: DecisionReason[];
+  recommendation: string;
+  triggeredFlags: string[];
+}
+
+export interface UnitConfig {
+  windSpeed: 'km/h';
+  temperature: 'C';
+  distance: 'm';
+}
