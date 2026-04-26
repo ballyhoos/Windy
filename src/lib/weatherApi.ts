@@ -5,6 +5,7 @@ import type {
   ShoreRelation,
   WarningInfo,
 } from '../types/conditions';
+import { coastalStations, type CoastalStation } from '../data/coastalStations';
 
 const MOCK_LOCATIONS: LocationOption[] = [
   { id: 'st-kilda', name: 'St Kilda Beach', latitude: -37.8676, longitude: 144.9747, region: 'VIC' },
@@ -18,44 +19,6 @@ const coastOrientationByLocation: Record<string, number> = {
   torquay: 170,
   manly: 90,
   scarborough: 270,
-};
-
-const bomObservationPagesByState: Record<string, { coastal?: string; all?: string }> = {
-  NSW: {
-    coastal: 'https://www.bom.gov.au/nsw/observations/coastal.shtml',
-    all: 'https://www.bom.gov.au/nsw/observations/nswall.shtml',
-  },
-  VIC: {
-    coastal: 'https://www.bom.gov.au/vic/observations/coastal.shtml',
-    all: 'https://www.bom.gov.au/vic/observations/vicall.shtml',
-  },
-  QLD: {
-    coastal: 'https://www.bom.gov.au/qld/observations/coastal.shtml',
-    all: 'https://www.bom.gov.au/qld/observations/qldall.shtml',
-  },
-  WA: {
-    coastal: 'https://www.bom.gov.au/wa/observations/coastal.shtml',
-    all: 'https://www.bom.gov.au/wa/observations/waall.shtml',
-  },
-  SA: {
-    coastal: 'https://www.bom.gov.au/sa/observations/coastal.shtml',
-    all: 'https://www.bom.gov.au/sa/observations/saall.shtml',
-  },
-  TAS: {
-    coastal: 'https://www.bom.gov.au/tas/observations/coastal.shtml',
-    all: 'https://www.bom.gov.au/tas/observations/tasall.shtml',
-  },
-  NT: {
-    coastal: 'https://www.bom.gov.au/nt/observations/coastal.shtml',
-    all: 'https://www.bom.gov.au/nt/observations/ntall.shtml',
-  },
-};
-
-type BomStationCandidate = {
-  name: string;
-  url: string;
-  latitude: number;
-  longitude: number;
 };
 
 type BomObservedWind = {
@@ -140,18 +103,11 @@ type BomObservationJsonPayload = {
   };
 };
 
-const bomStationMetaCache = new Map<string, BomStationCandidate | null>();
-const bomStationListCache = new Map<string, BomStationCandidate[]>();
-const bomNearestStationCache = new Map<string, BomStationCandidate | null>();
-const BOM_NEAREST_STATION_STORAGE_PREFIX = 'paddle-check:bom-nearest-station:';
-const BOM_NEAREST_STATION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-
 function bomFetchUrl(url: string): string {
   const parsed = new URL(url);
-  if (import.meta.env.PROD) {
-    return url;
-  }
-  return `/bom-proxy${parsed.pathname}${parsed.search}`;
+  return url.startsWith('https://www.bom.gov.au')
+    ? `https://www.bom.gov.au${parsed.pathname}${parsed.search}`
+    : url;
 }
 
 function bomApiFetchUrl(path: string): string {
@@ -703,22 +659,18 @@ function buildBomForecastWeatherPayload(
 
 async function fetchBomObservedWind(location: LocationOption): Promise<BomObservedWind | null> {
   try {
-    if (import.meta.env.PROD) {
-      return await fetchBomApiObservedWind(location);
-    }
-
-    const nearestStation = await resolveNearestBomStationCandidate(location);
-    if (nearestStation) {
-      const observedFromNearest = await fetchBomObservedWindFromJsonUrl(nearestStation.url);
-      if (observedFromNearest) {
+    const coastalStation = resolveStaticCoastalStation(location);
+    if (coastalStation) {
+      const observedFromCoastalStation = await fetchBomObservedWindFromJsonUrl(coastalStation.observationUrl);
+      if (observedFromCoastalStation) {
         return {
-          ...observedFromNearest,
-          sourceLabel: nearestStation.name,
+          ...observedFromCoastalStation,
+          sourceLabel: coastalStation.stationName,
         };
       }
     }
 
-    return null;
+    return await fetchBomApiObservedWind(location);
   } catch {
     return null;
   }
@@ -780,188 +732,48 @@ async function fetchBomApiObservedWind(location: LocationOption): Promise<BomObs
   };
 }
 
-async function resolveNearestBomStationCandidate(
-  location: LocationOption,
-): Promise<BomStationCandidate | null> {
-  const cacheKey = `${location.latitude.toFixed(3)}|${location.longitude.toFixed(3)}|${normalizeAustralianStateCode(location.region) ?? inferAustralianStateFromCoordinates(location.latitude, location.longitude) ?? '??'}`;
-  const cached = bomNearestStationCache.get(cacheKey);
-  if (cached !== undefined) {
-    return cached;
-  }
-
-  const persisted = readBomNearestStationCache(cacheKey);
-  if (persisted) {
-    bomNearestStationCache.set(cacheKey, persisted);
-    return persisted;
-  }
-
+function resolveStaticCoastalStation(location: LocationOption): CoastalStation | null {
   const stateCode =
     normalizeAustralianStateCode(location.region) ??
     inferAustralianStateFromCoordinates(location.latitude, location.longitude);
-  if (!stateCode) {
-    bomNearestStationCache.set(cacheKey, null);
-    return null;
-  }
-
-  const pages = bomObservationPagesByState[stateCode];
-  if (!pages) {
-    return null;
-  }
-
-  const candidatePages = [pages.coastal, pages.all].filter((value): value is string => Boolean(value));
-  const candidateLists = await Promise.all(candidatePages.map((pageUrl) => fetchBomStationCandidatesCached(pageUrl)));
-  const candidates = dedupeBomStations(candidateLists.flat());
+  const candidates = coastalStations.filter((station) => !stateCode || station.state === stateCode);
   if (candidates.length === 0) {
-    bomNearestStationCache.set(cacheKey, null);
     return null;
   }
 
-  const nearest = [...candidates]
+  const locationTokens = buildLocationMatchTokens(location);
+  const aliasMatch = candidates.find((station) =>
+    station.aliases.some((alias) => locationTokens.has(normalizeStationAlias(alias))),
+  );
+  if (aliasMatch) {
+    return aliasMatch;
+  }
+
+  const nearest = candidates
     .map((station) => ({
       station,
       distance: haversineDistanceKm(location.latitude, location.longitude, station.latitude, station.longitude),
     }))
-    .sort((a, b) => {
-      if (a.distance !== b.distance) {
-        return a.distance - b.distance;
-      }
-      return scoreObservationStation(b.station.name) - scoreObservationStation(a.station.name);
-    })[0]?.station ?? null;
-  bomNearestStationCache.set(cacheKey, nearest);
-  if (nearest) {
-    writeBomNearestStationCache(cacheKey, nearest);
-  }
-  return nearest;
+    .sort((a, b) => a.distance - b.distance)[0];
+
+  return nearest && nearest.distance <= 30 ? nearest.station : null;
 }
 
-type BomNearestStationCacheRecord = BomStationCandidate & {
-  expiresAt: number;
-};
-
-function readBomNearestStationCache(cacheKey: string): BomStationCandidate | null {
-  try {
-    const raw = window.localStorage.getItem(`${BOM_NEAREST_STATION_STORAGE_PREFIX}${cacheKey}`);
-    if (!raw) {
-      return null;
-    }
-
-    const parsed = JSON.parse(raw) as BomNearestStationCacheRecord;
-    if (!parsed || typeof parsed.expiresAt !== 'number' || parsed.expiresAt < Date.now()) {
-      return null;
-    }
-
-    return {
-      name: parsed.name,
-      url: parsed.url,
-      latitude: parsed.latitude,
-      longitude: parsed.longitude,
-    };
-  } catch {
-    return null;
-  }
-}
-
-function writeBomNearestStationCache(cacheKey: string, station: BomStationCandidate): void {
-  try {
-    const payload: BomNearestStationCacheRecord = {
-      ...station,
-      expiresAt: Date.now() + BOM_NEAREST_STATION_TTL_MS,
-    };
-    window.localStorage.setItem(
-      `${BOM_NEAREST_STATION_STORAGE_PREFIX}${cacheKey}`,
-      JSON.stringify(payload),
-    );
-  } catch {
-    // Ignore storage failures and continue with in-memory cache only.
-  }
-}
-
-async function fetchBomStationCandidatesCached(pageUrl: string): Promise<BomStationCandidate[]> {
-  const cached = bomStationListCache.get(pageUrl);
-  if (cached !== undefined) {
-    return cached;
-  }
-
-  const fetched = await fetchBomStationCandidates(pageUrl);
-  bomStationListCache.set(pageUrl, fetched);
-  return fetched;
-}
-
-async function fetchBomStationCandidates(pageUrl: string): Promise<BomStationCandidate[]> {
-  const response = await fetch(bomFetchUrl(pageUrl));
-  if (!response.ok) {
-    return [];
-  }
-
-  const html = await response.text();
-  const document = new DOMParser().parseFromString(html, 'text/html');
-  const links = Array.from(
-    document.querySelectorAll<HTMLAnchorElement>('a[href*="/products/ID"]'),
+function buildLocationMatchTokens(location: LocationOption): Set<string> {
+  const baseName = location.name.split(',')[0] ?? location.name;
+  return new Set(
+    [location.name, baseName, `${baseName} ${location.region ?? ''}`]
+      .map(normalizeStationAlias)
+      .filter((value) => value.length > 0),
   );
-
-  const candidates: BomStationCandidate[] = [];
-  const stationRequests = links
-    .map((link) => {
-      const href = link.getAttribute('href') ?? '';
-      if (!/\/products\/ID[A-Z]\d{5}\/ID[A-Z]\d{5}\.\d+\.shtml$/i.test(href)) {
-        return null;
-      }
-
-      const url = new URL(href, 'https://www.bom.gov.au').toString();
-      return fetchBomStationCandidate(url, link.textContent?.trim() ?? '');
-    })
-    .filter((request): request is Promise<BomStationCandidate | null> => request !== null);
-
-  const resolved = await Promise.all(stationRequests);
-  for (const station of resolved) {
-    if (station) {
-      candidates.push(station);
-    }
-  }
-
-  return dedupeBomStations(candidates);
 }
 
-async function fetchBomStationCandidate(url: string, fallbackName: string): Promise<BomStationCandidate | null> {
-  const cached = bomStationMetaCache.get(url);
-  if (cached !== undefined) {
-    return cached;
-  }
-
-  try {
-    const response = await fetch(bomFetchUrl(url));
-    if (!response.ok) {
-      bomStationMetaCache.set(url, null);
-      return null;
-    }
-
-    const html = await response.text();
-    const document = new DOMParser().parseFromString(html, 'text/html');
-    const text = document.body.textContent ?? '';
-    const stationDetailsMatch = text.match(
-      /Station Details\s+ID:\s*[\d?]+\s+Name:\s*(.*?)\s+Lat:\s*([-\d.]+)\s+Lon:\s*([-\d.]+)\s+Height:/s,
-    );
-
-    if (!stationDetailsMatch) {
-      const fallback = fallbackName.trim();
-      if (fallback) {
-        bomStationMetaCache.set(url, null);
-      }
-      return null;
-    }
-
-    const candidate: BomStationCandidate = {
-      name: stationDetailsMatch[1].replace(/\s+/g, ' ').trim(),
-      url,
-      latitude: Number(stationDetailsMatch[2]),
-      longitude: Number(stationDetailsMatch[3]),
-    };
-    bomStationMetaCache.set(url, candidate);
-    return candidate;
-  } catch {
-    bomStationMetaCache.set(url, null);
-    return null;
-  }
+function normalizeStationAlias(value: string): string {
+  return normalizeText(value)
+    .toLowerCase()
+    .replace(/\b(vic|victoria|nsw|qld|queensland|wa|western australia|sa|south australia|tas|tasmania|nt|northern territory)\b/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 async function fetchBomObservedWindFromJsonUrl(stationPageUrl: string): Promise<BomObservedWind | null> {
@@ -1047,22 +859,6 @@ function parseBomObservationTimestamp(
   }
 
   return 0;
-}
-
-function dedupeBomStations(stations: BomStationCandidate[]): BomStationCandidate[] {
-  const seen = new Set<string>();
-  const output: BomStationCandidate[] = [];
-
-  for (const station of stations) {
-    const key = `${station.name}|${station.latitude.toFixed(3)}|${station.longitude.toFixed(3)}`;
-    if (seen.has(key)) {
-      continue;
-    }
-    seen.add(key);
-    output.push(station);
-  }
-
-  return output;
 }
 
 function normalizeAustralianStateCode(region: string | undefined): string | null {
@@ -1383,24 +1179,6 @@ function setBomTimeOnDate(dayDate: Date, timeLabel: string): Date {
   return next;
 }
 
-function scoreObservationStation(name: string): number {
-  const lower = name.toLowerCase();
-  let score = 0;
-
-  if (lower.includes('beacon')) score += 40;
-  if (lower.includes('harbour') || lower.includes('harbor')) score += 30;
-  if (lower.includes('island')) score += 26;
-  if (lower.includes('point')) score += 22;
-  if (lower.includes('beach')) score += 20;
-  if (lower.includes('cape')) score += 20;
-  if (lower.includes('inlet')) score += 18;
-  if (lower.includes('jetty') || lower.includes('wharf') || lower.includes('pier')) score += 18;
-  if (lower.includes('bay')) score += 16;
-  if (lower.includes('airport')) score -= 60;
-  if (lower.includes('cfa')) score -= 10;
-
-  return score;
-}
 function normalizeText(value: string): string {
   return value.replace(/\s+/g, ' ').trim();
 }

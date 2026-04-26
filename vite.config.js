@@ -7,11 +7,6 @@ export default defineConfig(function (_a) {
         plugins: [react()],
         server: {
             proxy: {
-                '/bom-proxy': {
-                    target: 'https://www.bom.gov.au',
-                    changeOrigin: true,
-                    rewrite: function (path) { return path.replace(/^\/bom-proxy/, ''); },
-                },
                 '/bom-api': {
                     target: 'https://api.weather.bom.gov.au',
                     changeOrigin: true,
