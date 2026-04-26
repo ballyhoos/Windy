@@ -17,7 +17,7 @@ type StatusCardProps = {
 
 const statusMeta = {
   green: { label: "Let's go!", color: '#2b8a57' },
-  amber: { label: 'Be careful', color: '#ff9f1c' },
+  amber: { label: 'Be careful', color: '#ffb86b' },
   red: { label: "Don't go", color: '#d64045' },
 };
 const loadingMeta = { label: '---', color: '#9aa6b2' };
