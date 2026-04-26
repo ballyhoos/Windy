@@ -94,7 +94,7 @@ export default function App() {
     try {
       const [marine, tide, sun] = await Promise.all([
         fetchMarineWeather(nextLocation, { mockMode: false }),
-        fetchTideData(nextLocation, { mockMode: true }),
+        fetchTideData(nextLocation, { mockMode: false }),
         fetchSunData(nextLocation, { mockMode: false }),
       ]);
 
