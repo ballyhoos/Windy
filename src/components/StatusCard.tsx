@@ -52,6 +52,8 @@ export function StatusCard({
   const [isLocationOpen, setIsLocationOpen] = useState(false);
   const [locationQueryDirty, setLocationQueryDirty] = useState(false);
   const locationInputRef = useRef<HTMLInputElement | null>(null);
+  const locationPopoverRef = useRef<HTMLDivElement | null>(null);
+  const locationTriggerRef = useRef<HTMLButtonElement | null>(null);
   const trimmedQuery = locationQuery.trim();
   const showSuggestions = isLocationOpen && locationQueryDirty && trimmedQuery.length >= 2;
   const visibleOptions = showSuggestions ? locationOptions : [];
@@ -80,6 +82,31 @@ export function StatusCard({
       locationInputRef.current?.select();
     });
     return () => window.cancelAnimationFrame(id);
+  }, [isLocationOpen]);
+
+  useEffect(() => {
+    if (!isLocationOpen) return;
+
+    function handlePointerDown(event: MouseEvent) {
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (locationPopoverRef.current?.contains(target)) return;
+      if (locationTriggerRef.current?.contains(target)) return;
+      setIsLocationOpen(false);
+    }
+
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        setIsLocationOpen(false);
+      }
+    }
+
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('keydown', handleEscape);
+    };
   }, [isLocationOpen]);
 
   useEffect(() => {
@@ -112,6 +139,7 @@ export function StatusCard({
         )}
         <div className="location-chip-row">
           <button
+            ref={locationTriggerRef}
             type="button"
             className="temp-chip location-chip location-chip__trigger"
             onClick={() => setIsLocationOpen((current) => !current)}
@@ -138,7 +166,7 @@ export function StatusCard({
           )}
         </div>
         {isLocationOpen && (
-          <div className="location-popover" role="dialog" aria-label="Location search">
+          <div ref={locationPopoverRef} className="location-popover" role="dialog" aria-label="Location search">
             <div className="location-popover__search-row">
               <input
                 ref={locationInputRef}
