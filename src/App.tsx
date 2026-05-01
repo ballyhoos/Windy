@@ -273,8 +273,15 @@ function upsertRecentLocations(
   nextLocation: LocationOption,
   max: number,
 ): LocationOption[] {
-  const deduped = current.filter((item) => item.id !== nextLocation.id);
+  const nextKey = normalizeRecentLocationKey(nextLocation);
+  const deduped = current.filter((item) => normalizeRecentLocationKey(item) !== nextKey);
   return [nextLocation, ...deduped].slice(0, max);
+}
+
+function normalizeRecentLocationKey(location: LocationOption): string {
+  const name = location.name.trim().toLowerCase().replace(/\s+/g, ' ');
+  const region = (location.region ?? '').trim().toLowerCase();
+  return `${name}|${region}`;
 }
 
 function loadStoredLocation(): LocationOption | null {

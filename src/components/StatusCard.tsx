@@ -120,23 +120,6 @@ export function StatusCard({
   return (
     <section className={`status-card ${loading ? 'status-card--updating' : ''}`}>
       <div className="status-hero">
-        {recentLocations.length > 0 && (
-          <div className="location-recents" aria-label="Recent locations">
-            {recentLocations.slice(0, 3).map((option) => (
-              <button
-                key={`recent-${option.id}`}
-                type="button"
-                className="location-recent-pill"
-                onClick={() => {
-                  onPickLocation(option);
-                  setIsLocationOpen(false);
-                }}
-              >
-                {option.name}
-              </button>
-            ))}
-          </div>
-        )}
         <div className="location-chip-row">
           <button
             ref={locationTriggerRef}
@@ -167,6 +150,23 @@ export function StatusCard({
         </div>
         {isLocationOpen && (
           <div ref={locationPopoverRef} className="location-popover" role="dialog" aria-label="Location search">
+            {recentLocations.length > 0 && (
+              <div className="location-recents location-recents--in-popover" aria-label="Recent locations">
+                {recentLocations.slice(0, 3).map((option) => (
+                  <button
+                    key={`recent-${option.id}`}
+                    type="button"
+                    className="location-recent-pill"
+                    onClick={() => {
+                      onPickLocation(option);
+                      setIsLocationOpen(false);
+                    }}
+                  >
+                    {option.name}
+                  </button>
+                ))}
+              </div>
+            )}
             <div className="location-popover__search-row">
               <input
                 ref={locationInputRef}
