@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { HourlyOutlook } from './HourlyOutlook';
+import forecastSubscribeBg from '../assets/forecast-subscribe-bg.png';
 import type { HourlyOutlookItem } from '../lib/hourlyOutlook';
 import type { DecisionResult, LocationOption, MarineConditionSet } from '../types/conditions';
 
@@ -7,6 +8,8 @@ type StatusCardProps = {
   decision: DecisionResult;
   marine: MarineConditionSet;
   hourlyOutlook: HourlyOutlookItem[];
+  isSubscribed: boolean;
+  onSubscribeUnlock: () => void;
   loading: boolean;
   onUseCurrentLocation: () => void;
   onSearchLocation: (query: string) => Promise<LocationOption[]>;
@@ -27,6 +30,8 @@ export function StatusCard({
   decision,
   marine,
   hourlyOutlook,
+  isSubscribed,
+  onSubscribeUnlock,
   loading,
   onUseCurrentLocation,
   onSearchLocation,
@@ -114,8 +119,8 @@ export function StatusCard({
     const label = getStationLabel(marine.sourceLabel);
     if (!label) return;
     // Debug visibility without occupying UI space.
-    console.info('[Paddle Check] Station:', label);
-  }, [loading, marine.sourceLabel]);
+    console.info(`[Paddle Check] Location: ${marine.location.name} | Station: ${label}`);
+  }, [loading, marine.location.name, marine.sourceLabel]);
 
   return (
     <section className={`status-card ${loading ? 'status-card--updating' : ''}`}>
@@ -248,7 +253,25 @@ export function StatusCard({
         </div>
       </div>
 
-      <HourlyOutlook items={hourlyOutlook} embedded />
+      <div className={`forecast-gate ${isSubscribed ? '' : 'forecast-gate--locked'}`}>
+        <HourlyOutlook items={hourlyOutlook} embedded />
+        {!isSubscribed && (
+          <div className="forecast-gate__overlay" role="region" aria-label="Forecast subscription gate">
+            <img
+              className="forecast-gate__image"
+              src={forecastSubscribeBg}
+              alt="Forecast preview locked"
+            />
+            <div className="forecast-gate__card">
+              <strong>Subscribe for full forecast</strong>
+              <p>Unlock the 36-hour wind and tide forecast graph.</p>
+              <button type="button" className="forecast-gate__button" onClick={onSubscribeUnlock}>
+                Subscribe
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
     </section>
   );
 }

@@ -86,25 +86,48 @@ export function HourlyOutlook({ items, embedded = false }: HourlyOutlookProps) {
   const activeTideMarkerKey = pinnedTideMarkerKey ?? hoverTideMarkerKey;
   const activeTideMarker =
     tideExtremes.find((extreme) => extreme.key === activeTideMarkerKey) ?? null;
-  const tooltipX = activePoint
-    ? Math.max(GRAPH.left + 52, Math.min(activePoint.x, renderWidth - GRAPH.right - 52))
-    : 0;
-  const sunTooltipX = activeSunMarker
-    ? Math.max(GRAPH.left + 52, Math.min(activeSunMarker.x, renderWidth - GRAPH.right - 52))
-    : 0;
-  const tideTooltipX = activeTideMarker
-    ? Math.max(GRAPH.left + 52, Math.min(activeTideMarker.x, renderWidth - GRAPH.right - 52))
-    : 0;
-  const tideTooltipY = activeTideMarker
-    ? Math.max(
-        GRAPH.top + 16,
-        Math.min(
-          activeTideMarker.y + (activeTideMarker.type === 'high' ? 28 : -16),
-          GRAPH.height - GRAPH.bottom - 6,
-        ),
-      )
-    : 0;
-  const activePointY = activePoint?.y ?? GRAPH.top + yRange;
+  const graphBounds = {
+    minX: GRAPH.left,
+    maxX: renderWidth - GRAPH.right,
+    minY: GRAPH.top,
+    maxY: GRAPH.height - GRAPH.bottom,
+  };
+  const windTooltipPlacement = activePoint
+    ? getTooltipPlacement({
+        anchorX: activePoint.x,
+        anchorY: activePoint.y ?? GRAPH.top + yRange,
+        tooltipWidth: 84,
+        tooltipHeight: 24,
+        graphBounds,
+        gap: 8,
+        belowExtraOffset: 8,
+        preferredSide: 'above',
+      })
+    : null;
+  const sunTooltipPlacement = activeSunMarker
+    ? getTooltipPlacement({
+        anchorX: activeSunMarker.x,
+        anchorY: GRAPH.top + 16,
+        tooltipWidth: 136,
+        tooltipHeight: 22,
+        graphBounds,
+        gap: 8,
+        belowExtraOffset: 8,
+        preferredSide: 'below',
+      })
+    : null;
+  const tideTooltipPlacement = activeTideMarker
+    ? getTooltipPlacement({
+        anchorX: activeTideMarker.x,
+        anchorY: activeTideMarker.y,
+        tooltipWidth: 140,
+        tooltipHeight: 24,
+        graphBounds,
+        gap: 8,
+        belowExtraOffset: 10,
+        preferredSide: activeTideMarker.type === 'high' ? 'below' : 'above',
+      })
+    : null;
 
   return (
     <Wrapper className={wrapperClass}>
@@ -289,7 +312,7 @@ export function HourlyOutlook({ items, embedded = false }: HourlyOutlookProps) {
         {activePoint && (
           <g
             className={`hourly-tooltip ${activePoint.isInterpolatedWind ? 'hourly-tooltip--interpolated' : `hourly-tooltip--${activePoint.status}`}`}
-            transform={`translate(${tooltipX} ${activePointY - 20})`}
+            transform={`translate(${windTooltipPlacement?.x ?? 0} ${windTooltipPlacement?.y ?? 0})`}
           >
             <rect x={-42} y={-18} width={84} height={24} rx={12} ry={12} />
             <text x={0} y={-6} className="hourly-tooltip-text">
@@ -301,7 +324,7 @@ export function HourlyOutlook({ items, embedded = false }: HourlyOutlookProps) {
         {activeSunMarker && (
           <g
             className="hourly-sun-tooltip"
-            transform={`translate(${sunTooltipX} ${GRAPH.top + 14})`}
+            transform={`translate(${sunTooltipPlacement?.x ?? 0} ${sunTooltipPlacement?.y ?? 0})`}
           >
             <rect x={-68} y={-16} width={136} height={22} rx={11} ry={11} />
             <text x={0} y={-5} className="hourly-sun-tooltip-text">
@@ -315,7 +338,7 @@ export function HourlyOutlook({ items, embedded = false }: HourlyOutlookProps) {
         {activeTideMarker && (
           <g
             className="hourly-tide-tooltip"
-            transform={`translate(${tideTooltipX} ${tideTooltipY})`}
+            transform={`translate(${tideTooltipPlacement?.x ?? 0} ${tideTooltipPlacement?.y ?? 0})`}
           >
             <rect x={-70} y={-18} width={140} height={24} rx={12} ry={12} />
             <text x={0} y={-6} className="hourly-tide-tooltip-text">
@@ -529,6 +552,50 @@ function buildSmoothPath(points: Array<{ x: number; y: number }>): string {
   }
 
   return path;
+}
+
+function getTooltipPlacement(input: {
+  anchorX: number;
+  anchorY: number;
+  tooltipWidth: number;
+  tooltipHeight: number;
+  graphBounds: { minX: number; maxX: number; minY: number; maxY: number };
+  gap: number;
+  belowExtraOffset?: number;
+  preferredSide: 'above' | 'below';
+}): { x: number; y: number } {
+  const halfWidth = input.tooltipWidth / 2;
+  const halfHeight = input.tooltipHeight / 2;
+  const minCenterX = input.graphBounds.minX + halfWidth;
+  const maxCenterX = input.graphBounds.maxX - halfWidth;
+  const x = clamp(input.anchorX, minCenterX, maxCenterX);
+
+  const aboveY = input.anchorY - input.gap - halfHeight;
+  const belowExtra = input.belowExtraOffset ?? 0;
+  const belowY = input.anchorY + input.gap + halfHeight + belowExtra;
+  const minCenterY = input.graphBounds.minY + halfHeight;
+  const maxCenterY = input.graphBounds.maxY - halfHeight;
+  const canPlaceAbove = aboveY >= minCenterY;
+  const canPlaceBelow = belowY <= maxCenterY;
+
+  let y: number;
+  if (input.preferredSide === 'above') {
+    if (canPlaceAbove) {
+      y = aboveY;
+    } else if (canPlaceBelow) {
+      y = belowY;
+    } else {
+      y = clamp(aboveY, minCenterY, maxCenterY);
+    }
+  } else if (canPlaceBelow) {
+    y = belowY;
+  } else if (canPlaceAbove) {
+    y = aboveY;
+  } else {
+    y = clamp(belowY, minCenterY, maxCenterY);
+  }
+
+  return { x, y };
 }
 
 function clamp(value: number, min: number, max: number): number {

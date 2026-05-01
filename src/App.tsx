@@ -14,11 +14,13 @@ import type {
 const STORAGE_KEYS = {
   location: 'paddle-check:last-location',
   recentLocations: 'paddle-check:recent-locations',
+  isSubscribed: 'paddle-check:is-subscribed',
 };
 
 const INITIAL_LOCATION = loadStoredLocation();
 
 export default function App() {
+  const [isSubscribed, setIsSubscribed] = useState<boolean>(loadSubscriptionState());
   const [location, setLocation] = useState<LocationOption | null>(INITIAL_LOCATION);
   const [recentLocations, setRecentLocations] = useState<LocationOption[]>(loadRecentLocations());
   const [searchResults, setSearchResults] = useState<LocationOption[]>([]);
@@ -32,6 +34,13 @@ export default function App() {
   const conditionsRequestIdRef = useRef(0);
   const inFlightLocationKeyRef = useRef<string | null>(null);
   const lastLoadedLocationKeyRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('relockGraph') === '1') {
+      setIsSubscribed(false);
+      window.sessionStorage.setItem(STORAGE_KEYS.isSubscribed, 'false');
+    }
+  }, []);
 
   useEffect(() => {
     if (!location) {
@@ -207,6 +216,11 @@ export default function App() {
               decision={decision}
               marine={conditions.marine}
               hourlyOutlook={hourlyOutlook}
+              isSubscribed={isSubscribed}
+              onSubscribeUnlock={() => {
+                setIsSubscribed(true);
+                window.sessionStorage.setItem(STORAGE_KEYS.isSubscribed, 'true');
+              }}
               loading={loading}
               onUseCurrentLocation={handleUseCurrentLocation}
               onSearchLocation={handleSearch}
@@ -222,8 +236,8 @@ export default function App() {
         )}
 
         <footer className="app-footer">
-          <a href="https://sunrise-sunset.org/api" target="_blank" rel="noreferrer">
-            Sun data by Sunrise-Sunset API
+          <a href="https://sunrise-sunset.org/api" target="_blank" rel="noreferrer" className="app-footer__sun-link">
+            Sunrise-Sunset API
           </a>
           <span className="app-footer__sep" aria-hidden="true">
             |
@@ -247,6 +261,18 @@ export default function App() {
       </div>
     </main>
   );
+}
+
+function loadSubscriptionState(): boolean {
+  try {
+    const stored = window.sessionStorage.getItem(STORAGE_KEYS.isSubscribed);
+    if (stored === 'true') return true;
+    if (stored === 'false') return false;
+    const envDefault = String(import.meta.env.VITE_SUBSCRIPTION_DEFAULT ?? '').trim().toLowerCase();
+    return envDefault === '1' || envDefault === 'true' || envDefault === 'yes';
+  } catch {
+    return false;
+  }
 }
 
 function loadRecentLocations(): LocationOption[] {
@@ -299,10 +325,31 @@ function isSameLocation(a: LocationOption | null, b: LocationOption | null): boo
   }
 
   const sameId = a.id === b.id;
-  const sameCoordinates =
-    Math.abs(a.latitude - b.latitude) < 0.0001 && Math.abs(a.longitude - b.longitude) < 0.0001;
+  const distanceKm = haversineKm(a.latitude, a.longitude, b.latitude, b.longitude);
+  const sameCoordinates = distanceKm <= 2;
+  const sameName =
+    normalizeLocationName(a.name) === normalizeLocationName(b.name);
   const sameRegion = (a.region ?? '') === (b.region ?? '');
-  return sameId || (sameCoordinates && sameRegion);
+  return sameId || (sameCoordinates && sameRegion) || (sameName && sameRegion);
+}
+
+function normalizeLocationName(value: string): string {
+  return value
+    .split(',')[0]
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+}
+
+function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return 6371 * c;
 }
 
 function createPlaceholderConditions(location: LocationOption): PaddleConditions {
