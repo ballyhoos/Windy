@@ -154,7 +154,11 @@ button {
 
 .app-footer {
   margin: 10px 0 4px;
-  text-align: center;
+  text-align: right;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
   font-size: 0.62rem;
   line-height: 1.25;
   color: rgba(31, 50, 68, 0.46);
@@ -164,6 +168,22 @@ button {
   color: inherit;
   text-decoration: underline;
   text-underline-offset: 1px;
+}
+
+.app-footer__sep {
+  opacity: 0.65;
+}
+
+.app-footer__x-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.app-footer__x-link svg {
+  width: 11px;
+  height: 11px;
+  display: block;
 }
 
 

@@ -222,9 +222,26 @@ export default function App() {
         )}
 
         <footer className="app-footer">
-          Sun data by{' '}
           <a href="https://sunrise-sunset.org/api" target="_blank" rel="noreferrer">
-            Sunrise-Sunset API
+            Sun data by Sunrise-Sunset API
+          </a>
+          <span className="app-footer__sep" aria-hidden="true">
+            |
+          </span>
+          <a
+            href="https://x.com/_ballyhoos"
+            target="_blank"
+            rel="noreferrer"
+            className="app-footer__x-link"
+            aria-label="X account @_ballyhoos"
+          >
+            @_ballyhoos
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                d="M18.244 2H21.5l-7.11 8.129L22.75 22h-6.545l-5.128-6.707L5.21 22H1.95l7.607-8.695L1.5 2h6.712l4.63 6.114L18.244 2Zm-1.14 18h1.803L7.23 3.895H5.293L17.104 20Z"
+                fill="currentColor"
+              />
+            </svg>
           </a>
         </footer>
       </div>
