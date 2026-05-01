@@ -24,8 +24,8 @@ export interface ForecastWindow {
 }
 
 export interface WindCondition {
-  speedKmh: number | null;
-  gustKmh: number | null;
+  speed: number | null;
+  gust: number | null;
   directionDegrees: number | null;
   cardinal: string;
   shoreRelation: ShoreRelation;
@@ -33,11 +33,12 @@ export interface WindCondition {
 
 export interface MarineHourlyPoint {
   timestamp: string;
-  windSpeedKmh: number | null;
-  windGustKmh: number | null;
+  windSpeed: number | null;
+  windGust: number | null;
   windDirectionDegrees: number | null;
   isWindForecastPoint?: boolean;
   airTempC: number | null;
+  feelsLikeTempC: number | null;
   waterTempC: number | null;
   swellHeightM: number | null;
   visibilityKm: number | null;
@@ -48,6 +49,7 @@ export interface MarineConditionSet {
   location: LocationOption;
   wind: WindCondition;
   airTempC: number | null;
+  feelsLikeTempC: number | null;
   waterTempC: number | null;
   swellHeightM: number | null;
   visibilityKm: number | null;
@@ -62,15 +64,23 @@ export interface MarineConditionSet {
 export interface TideCondition {
   nextHigh: string | null;
   nextLow: string | null;
+  events?: TideEvent[];
   state: TideState;
   currentRisk: 'low' | 'moderate' | 'high';
   note: string;
   sourceLabel: string;
 }
 
+export interface TideEvent {
+  datetime: string;
+  type: 'high' | 'low';
+  heightM: number | null;
+}
+
 export interface SunCondition {
   sunrise: string | null;
   sunset: string | null;
+  moonPhase: 'new' | 'crescent' | 'quarter' | 'gibbous' | 'full' | 'unknown';
   daylightRemainingMinutes: number | null;
   safeReturnBufferMinutes: number;
   sourceLabel: string;
@@ -99,7 +109,13 @@ export interface DecisionResult {
 }
 
 export interface UnitConfig {
-  windSpeed: 'km/h';
+  windSpeed: 'kn';
   temperature: 'C';
   distance: 'm';
 }
+
+export const DEFAULT_UNITS: UnitConfig = {
+  windSpeed: 'kn',
+  temperature: 'C',
+  distance: 'm',
+};

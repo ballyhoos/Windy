@@ -4,10 +4,11 @@ import type { DecisionStatus, PaddleConditions } from '../types/conditions';
 export interface HourlyOutlookItem {
   timestamp: string;
   status: DecisionStatus;
-  windKmh: number | null;
+  windSpeed: number | null;
   windDirectionDegrees: number;
   isInterpolatedWind: boolean;
-  tideLevel: number;
+  isForecastAnchor: boolean;
+  tideLevel: number | null;
   isDaylight: boolean;
   sunriseTimestamp: string | null;
   sunsetTimestamp: string | null;
@@ -16,11 +17,12 @@ export interface HourlyOutlookItem {
 type HourlySourcePoint = {
   timestamp: string;
   time: Date;
-  windSpeedKmh: number | null;
-  windGustKmh: number | null;
+  windSpeed: number | null;
+  windGust: number | null;
   windDirectionDegrees: number | null;
   isWindForecastPoint?: boolean;
   airTempC: number | null;
+  feelsLikeTempC: number | null;
   waterTempC: number | null;
   swellHeightM: number | null;
   visibilityKm: number | null;
@@ -41,7 +43,8 @@ export function buildHourlyOutlook(conditions: PaddleConditions): HourlyOutlookI
     .map((point) => ({ ...point, time: new Date(point.timestamp) }))
     .filter((point) => !Number.isNaN(point.time.getTime()));
   const currentDecision = evaluatePaddleConditions(conditions);
-  const forecastSource = conditions.marine.forecastSourceLabel.startsWith('BOM place forecast');
+  const forecastSource = conditions.marine.forecastSourceLabel.startsWith('BOM forecast (worker)');
+  const hasForecastAnchors = liveHourly.some((point) => point.isWindForecastPoint === true && point.windSpeed !== null);
   const slots = Array.from({ length: 36 }, (_, index) => addHours(start, index));
 
   for (const slot of slots) {
@@ -53,7 +56,19 @@ export function buildHourlyOutlook(conditions: PaddleConditions): HourlyOutlookI
       : false;
     const isCurrentSlot = slot.getTime() === start.getTime();
 
-    const livePoint = forecastSource ? findOrInterpolateLivePoint(liveHourly, slot) : findNearestLivePoint(liveHourly, slot);
+    const livePoint =
+      forecastSource && hasForecastAnchors
+        ? findExactLivePoint(liveHourly, slot)
+        : forecastSource
+          ? null
+          : findNearestLivePoint(liveHourly, slot);
+    const isForecastAnchor = Boolean(
+      forecastSource &&
+      hasForecastAnchors &&
+      livePoint &&
+      livePoint.isWindForecastPoint === true &&
+      !livePoint.isInterpolatedWind,
+    );
     const projected = isCurrentSlot
       ? conditions
       : livePoint
@@ -63,13 +78,17 @@ export function buildHourlyOutlook(conditions: PaddleConditions): HourlyOutlookI
     output.push({
       timestamp: slot.toISOString(),
       status: decision.status,
-      windKmh: forecastSource
+      windSpeed: forecastSource && !hasForecastAnchors
         ? isCurrentSlot
-          ? conditions.marine.wind.speedKmh ?? livePoint?.windSpeedKmh ?? null
-          : livePoint?.windSpeedKmh ?? null
+          ? conditions.marine.wind.speed ?? null
+          : null
+        : forecastSource
+        ? isCurrentSlot
+          ? conditions.marine.wind.speed ?? livePoint?.windSpeed ?? null
+          : livePoint?.windSpeed ?? null
         : isCurrentSlot
-          ? conditions.marine.wind.speedKmh ?? livePoint?.windSpeedKmh ?? projected.marine.wind.speedKmh ?? null
-          : livePoint?.windSpeedKmh ?? projected.marine.wind.speedKmh ?? null,
+          ? conditions.marine.wind.speed ?? livePoint?.windSpeed ?? projected.marine.wind.speed ?? null
+          : livePoint?.windSpeed ?? projected.marine.wind.speed ?? null,
       windDirectionDegrees: normalizeDegrees(
         forecastSource
           ? isCurrentSlot
@@ -79,7 +98,8 @@ export function buildHourlyOutlook(conditions: PaddleConditions): HourlyOutlookI
             ? conditions.marine.wind.directionDegrees ?? livePoint?.windDirectionDegrees ?? projected.marine.wind.directionDegrees ?? 0
           : livePoint?.windDirectionDegrees ?? projected.marine.wind.directionDegrees ?? 0,
       ),
-      isInterpolatedWind: Boolean(livePoint?.isInterpolatedWind),
+      isInterpolatedWind: Boolean(forecastSource && !isForecastAnchor && livePoint),
+      isForecastAnchor,
       tideLevel: getTideLevelForTime(slot, conditions),
       isDaylight,
       sunriseTimestamp: daylightWindow?.sunrise.toISOString() ?? null,
@@ -94,37 +114,36 @@ function isValidDate(value: Date | null): value is Date {
   return !!value && !Number.isNaN(value.getTime());
 }
 
-function getTideLevelForTime(slot: Date, conditions: PaddleConditions): number {
-  const tidalPeriodMs = 12.4 * 60 * 60 * 1000;
-  const twoPi = Math.PI * 2;
-  const nextHigh = toValidDate(conditions.tide.nextHigh);
-  const nextLow = toValidDate(conditions.tide.nextLow);
+function getTideLevelForTime(slot: Date, conditions: PaddleConditions): number | null {
+  const events = (conditions.tide.events ?? [])
+    .map((event) => ({
+      time: toValidDate(event.datetime),
+      level: event.type === 'high' ? 1 : -1,
+    }))
+    .filter((event): event is { time: Date; level: 1 | -1 } => event.time !== null)
+    .sort((a, b) => a.time.getTime() - b.time.getTime());
 
-  if (nextHigh) {
-    const phase = ((slot.getTime() - nextHigh.getTime()) / tidalPeriodMs) * twoPi;
-    return clamp(Math.cos(phase), -1, 1);
-  }
-
-  if (nextLow) {
-    const phase = ((slot.getTime() - nextLow.getTime()) / tidalPeriodMs) * twoPi;
-    return clamp(-Math.cos(phase), -1, 1);
-  }
-
-  const statePhaseOffset =
-    conditions.tide.state === 'incoming'
-      ? -Math.PI / 2
-      : conditions.tide.state === 'outgoing'
-        ? Math.PI / 2
-        : 0;
-  const phase = ((slot.getTime() - Date.now()) / tidalPeriodMs) * twoPi + statePhaseOffset;
-  return clamp(Math.sin(phase), -1, 1);
-}
-
-function toValidDate(value: string | null): Date | null {
-  if (!value) {
+  if (events.length < 2) {
     return null;
   }
 
+  const slotMs = slot.getTime();
+  for (let i = 0; i < events.length - 1; i += 1) {
+    const current = events[i];
+    const next = events[i + 1];
+    const startMs = current.time.getTime();
+    const endMs = next.time.getTime();
+    if (slotMs < startMs || slotMs > endMs || endMs <= startMs) continue;
+    const progress = (slotMs - startMs) / (endMs - startMs);
+    const eased = 0.5 - 0.5 * Math.cos(Math.PI * progress);
+    return clamp(current.level + (next.level - current.level) * eased, -1, 1);
+  }
+
+  return null;
+}
+
+function toValidDate(value: string | null): Date | null {
+  if (!value) return null;
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
@@ -159,49 +178,7 @@ function findExactLivePoint(
   );
 }
 
-function findOrInterpolateLivePoint(points: HourlySourcePoint[], slot: Date): HourlySourcePoint | null {
-  const exact = findExactLivePoint(points, slot);
-  if (exact) {
-    return exact;
-  }
-
-  const anchors = points
-    .filter((point) => point.isWindForecastPoint === true && point.windSpeedKmh !== null)
-    .sort((a, b) => a.time.getTime() - b.time.getTime());
-  const slotTime = slot.getTime();
-  const before = [...anchors].reverse().find((point) => point.time.getTime() < slotTime) ?? null;
-  const after = anchors.find((point) => point.time.getTime() > slotTime) ?? null;
-
-  if (!before || !after) {
-    return null;
-  }
-
-  const totalMs = after.time.getTime() - before.time.getTime();
-  if (totalMs <= 0 || totalMs > 4 * 60 * 60 * 1000) {
-    return null;
-  }
-
-  const progress = (slotTime - before.time.getTime()) / totalMs;
-  const windSpeedKmh = interpolateNullableNumber(before.windSpeedKmh, after.windSpeedKmh, progress);
-  if (windSpeedKmh === null) {
-    return null;
-  }
-
-  return {
-    ...before,
-    timestamp: slot.toISOString(),
-    time: slot,
-    windSpeedKmh,
-    windGustKmh: interpolateNullableNumber(before.windGustKmh, after.windGustKmh, progress),
-    windDirectionDegrees: interpolateDirection(before.windDirectionDegrees, after.windDirectionDegrees, progress),
-    airTempC: interpolateNullableNumber(before.airTempC, after.airTempC, progress),
-    waterTempC: interpolateNullableNumber(before.waterTempC, after.waterTempC, progress),
-    swellHeightM: interpolateNullableNumber(before.swellHeightM, after.swellHeightM, progress),
-    visibilityKm: interpolateNullableNumber(before.visibilityKm, after.visibilityKm, progress),
-    weatherCode: before.weatherCode,
-    isInterpolatedWind: true,
-  };
-}
+// Forecast graph path intentionally uses exact source points only (no interpolation).
 
 function interpolateNullableNumber(
   start: number | null,
@@ -231,10 +208,11 @@ function interpolateDirection(
 function applyLivePointToConditions(
   base: PaddleConditions,
   point: {
-    windSpeedKmh: number | null;
-    windGustKmh: number | null;
+    windSpeed: number | null;
+    windGust: number | null;
     windDirectionDegrees: number | null;
     airTempC: number | null;
+    feelsLikeTempC: number | null;
     waterTempC: number | null;
     swellHeightM: number | null;
     visibilityKm: number | null;
@@ -252,11 +230,12 @@ function applyLivePointToConditions(
       ...base.marine,
       wind: {
         ...base.marine.wind,
-        speedKmh: point.windSpeedKmh,
-        gustKmh: point.windGustKmh,
+        speed: point.windSpeed,
+        gust: point.windGust,
         directionDegrees: point.windDirectionDegrees,
       },
       airTempC: point.airTempC,
+      feelsLikeTempC: point.feelsLikeTempC,
       waterTempC: point.waterTempC,
       swellHeightM: point.swellHeightM,
       visibilityKm: point.visibilityKm,
@@ -298,8 +277,8 @@ function projectConditionsForHour(
 ): PaddleConditions {
   const now = new Date();
   const hoursFromNow = Math.max(0, (slot.getTime() - now.getTime()) / 3600000);
-  const baseWind = base.marine.wind.speedKmh ?? 0;
-  const baseGust = base.marine.wind.gustKmh ?? baseWind + 5;
+  const baseWind = base.marine.wind.speed ?? 0;
+  const baseGust = base.marine.wind.gust ?? baseWind + 5;
 
   const cycle = Math.sin((slot.getHours() - 12) / 3);
   const drift = hoursFromNow * 0.8;
@@ -313,8 +292,8 @@ function projectConditionsForHour(
       ...base.marine,
       wind: {
         ...base.marine.wind,
-        speedKmh: projectedWind,
-        gustKmh: projectedGust,
+        speed: projectedWind,
+        gust: projectedGust,
       },
       forecast: {
         ...base.marine.forecast,

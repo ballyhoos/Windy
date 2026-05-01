@@ -5,10 +5,10 @@ import type {
 } from '../types/conditions';
 
 type Thresholds = {
-  strongWindKmh: number;
-  cautionWindKmh: number;
-  strongGustKmh: number;
-  cautionGustKmh: number;
+  strongWind: number;
+  cautionWind: number;
+  strongGust: number;
+  cautionGust: number;
   highSwellM: number;
   cautionSwellM: number;
   poorVisibilityKm: number;
@@ -18,10 +18,10 @@ type Thresholds = {
 };
 
 const thresholds: Thresholds = {
-  strongWindKmh: 22,
-  cautionWindKmh: 14,
-  strongGustKmh: 28,
-  cautionGustKmh: 20,
+  strongWind: 12,
+  cautionWind: 8,
+  strongGust: 15,
+  cautionGust: 11,
   highSwellM: 0.8,
   cautionSwellM: 0.45,
   poorVisibilityKm: 5,
@@ -36,7 +36,7 @@ export function evaluatePaddleConditions(
   const redReasons: DecisionReason[] = [];
   const amberReasons: DecisionReason[] = [];
   const triggeredFlags: string[] = [];
-  const { marine, tide, sun } = conditions;
+  const { marine, sun } = conditions;
 
   if (marine.warnings.some((warning) => warning.active)) {
     pushReason(redReasons, triggeredFlags, 'red', 'Active marine or weather warning', 'warning');
@@ -48,19 +48,15 @@ export function evaluatePaddleConditions(
     pushReason(amberReasons, triggeredFlags, 'amber', 'Unsettled weather nearby', 'weather-shift');
   }
 
-  if (marine.wind.shoreRelation === 'offshore' && (marine.wind.speedKmh ?? 0) >= thresholds.cautionWindKmh) {
-    pushReason(redReasons, triggeredFlags, 'red', 'Offshore wind above safe threshold', 'offshore-wind');
-  }
-
-  if ((marine.wind.speedKmh ?? 0) >= thresholds.strongWindKmh) {
+  if ((marine.wind.speed ?? 0) >= thresholds.strongWind) {
     pushReason(redReasons, triggeredFlags, 'red', 'Strong wind', 'wind');
-  } else if ((marine.wind.speedKmh ?? 0) >= thresholds.cautionWindKmh) {
+  } else if ((marine.wind.speed ?? 0) >= thresholds.cautionWind) {
     pushReason(amberReasons, triggeredFlags, 'amber', 'Marginal wind', 'wind-caution');
   }
 
-  if ((marine.wind.gustKmh ?? 0) >= thresholds.strongGustKmh) {
+  if ((marine.wind.gust ?? 0) >= thresholds.strongGust) {
     pushReason(redReasons, triggeredFlags, 'red', 'Strong gusts', 'gusts');
-  } else if ((marine.wind.gustKmh ?? 0) >= thresholds.cautionGustKmh) {
+  } else if ((marine.wind.gust ?? 0) >= thresholds.cautionGust) {
     pushReason(amberReasons, triggeredFlags, 'amber', 'Gusty conditions', 'gusts-caution');
   }
 
@@ -81,12 +77,6 @@ export function evaluatePaddleConditions(
     sun.daylightRemainingMinutes <= sun.safeReturnBufferMinutes
   ) {
     pushReason(redReasons, triggeredFlags, 'red', 'Not enough daylight to return safely', 'daylight');
-  }
-
-  if (tide.currentRisk === 'high') {
-    pushReason(redReasons, triggeredFlags, 'red', 'Dangerous tide or current conditions', 'tide');
-  } else if (tide.currentRisk === 'moderate') {
-    pushReason(amberReasons, triggeredFlags, 'amber', 'Tide may make paddling harder', 'tide-caution');
   }
 
   if ((marine.airTempC ?? 99) <= thresholds.coldAirC || (marine.waterTempC ?? 99) <= thresholds.coldWaterC) {

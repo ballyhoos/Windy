@@ -4,51 +4,55 @@ export async function fetchSunData(
   location: LocationOption,
   options?: { mockMode?: boolean },
 ): Promise<SunCondition> {
-  if (options?.mockMode === false) {
-    return fetchOpenMeteoSun(location);
+  if (options?.mockMode) {
+    return buildEstimatedSun(location, 'Estimated sunrise/sunset');
   }
 
-  return buildMockSun(location);
-}
+  const params = new URLSearchParams({
+    lat: String(location.latitude),
+    lng: String(location.longitude),
+    formatted: '0',
+    date: 'today',
+  });
+  const endpoint = `https://api.sunrise-sunset.org/json?${params.toString()}`;
 
-async function fetchOpenMeteoSun(location: LocationOption): Promise<SunCondition> {
-  const url = new URL('https://api.open-meteo.com/v1/forecast');
-  url.searchParams.set('latitude', String(location.latitude));
-  url.searchParams.set('longitude', String(location.longitude));
-  url.searchParams.set('daily', 'sunrise,sunset');
-  url.searchParams.set('timezone', 'auto');
-  url.searchParams.set('forecast_days', '2');
+  try {
+    const response = await fetch(endpoint);
+    if (!response.ok) {
+      throw new Error(`Sunrise-Sunset API failed (${response.status})`);
+    }
 
-  const response = await fetch(url.toString());
-  if (!response.ok) {
-    return buildMockSun(location);
-  }
-
-  const payload = (await response.json()) as {
-    daily?: {
-      sunrise?: string[];
-      sunset?: string[];
+    const payload = (await response.json()) as {
+      status?: string;
+      results?: { sunrise?: string; sunset?: string };
     };
-  };
+    const sunrise = payload?.results?.sunrise ? new Date(payload.results.sunrise) : null;
+    const sunset = payload?.results?.sunset ? new Date(payload.results.sunset) : null;
 
-  const sunrise = payload.daily?.sunrise?.[0] ?? null;
-  const sunset = payload.daily?.sunset?.[0] ?? null;
-  const now = new Date();
-  const daylightRemainingMinutes =
-    sunset === null
-      ? null
-      : Math.max(0, Math.round((new Date(sunset).getTime() - now.getTime()) / 60000));
+    if (!isValidDate(sunrise) || !isValidDate(sunset)) {
+      throw new Error('Sunrise-Sunset API returned invalid time values');
+    }
 
-  return {
-    sunrise,
-    sunset,
-    daylightRemainingMinutes,
-    safeReturnBufferMinutes: 90,
-    sourceLabel: 'Open-Meteo sunrise/sunset',
-  };
+    const now = new Date();
+    const daylightRemainingMinutes = Math.max(
+      0,
+      Math.round((sunset.getTime() - now.getTime()) / 60000),
+    );
+
+    return {
+      sunrise: sunrise.toISOString(),
+      sunset: sunset.toISOString(),
+      moonPhase: deriveMoonPhase(new Date()),
+      daylightRemainingMinutes,
+      safeReturnBufferMinutes: 90,
+      sourceLabel: 'Sunrise-Sunset API',
+    };
+  } catch {
+    return buildEstimatedSun(location, 'Estimated sunrise/sunset');
+  }
 }
 
-function buildMockSun(location: LocationOption): SunCondition {
+function buildEstimatedSun(location: LocationOption, sourceLabel: string): SunCondition {
   const now = new Date();
   const daylightHours = estimateDaylightHours(location.latitude, now);
   const sunriseHour = 12 - daylightHours / 2;
@@ -66,9 +70,10 @@ function buildMockSun(location: LocationOption): SunCondition {
   return {
     sunrise: sunrise.toISOString(),
     sunset: sunset.toISOString(),
+    moonPhase: 'unknown',
     daylightRemainingMinutes,
     safeReturnBufferMinutes: 90,
-    sourceLabel: 'Mock sun data',
+    sourceLabel,
   };
 }
 
@@ -88,4 +93,22 @@ function getDayOfYear(date: Date): number {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+function isValidDate(value: Date | null): value is Date {
+  return value instanceof Date && !Number.isNaN(value.getTime());
+}
+
+function deriveMoonPhase(date: Date): SunCondition['moonPhase'] {
+  const synodicMonth = 29.53058867;
+  const knownNewMoon = Date.UTC(2000, 0, 6, 18, 14, 0);
+  const daysSince = (date.getTime() - knownNewMoon) / 86400000;
+  const cycle = ((daysSince % synodicMonth) + synodicMonth) % synodicMonth;
+  const ratio = cycle / synodicMonth;
+
+  if (ratio < 0.03 || ratio >= 0.97) return 'new';
+  if (ratio < 0.22 || ratio >= 0.78) return 'crescent';
+  if (ratio < 0.28 || ratio >= 0.72) return 'quarter';
+  if (ratio < 0.47 || ratio >= 0.53) return 'gibbous';
+  return 'full';
 }

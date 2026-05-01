@@ -1,0 +1,4 @@
+name = "windy-bom-proxy"
+main = "bom-proxy.js"
+compatibility_date = "2026-04-29"
+

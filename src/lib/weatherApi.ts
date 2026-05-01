@@ -2,40 +2,27 @@ import type {
   LocationOption,
   MarineHourlyPoint,
   MarineConditionSet,
-  ShoreRelation,
   WarningInfo,
 } from '../types/conditions';
-import { coastalStations, type CoastalStation } from '../data/coastalStations';
-
-const MOCK_LOCATIONS: LocationOption[] = [
-  { id: 'st-kilda', name: 'St Kilda Beach', latitude: -37.8676, longitude: 144.9747, region: 'VIC' },
-  { id: 'torquay', name: 'Torquay Front Beach', latitude: -38.3306, longitude: 144.3251, region: 'VIC' },
-  { id: 'manly', name: 'Manly Cove', latitude: -33.7995, longitude: 151.2869, region: 'NSW' },
-  { id: 'scarborough', name: 'Scarborough Beach', latitude: -31.8952, longitude: 115.751, region: 'WA' },
-];
-
-const coastOrientationByLocation: Record<string, number> = {
-  'st-kilda': 180,
-  torquay: 170,
-  manly: 90,
-  scarborough: 270,
-};
 
 type BomObservedWind = {
-  speedKmh: number | null;
-  gustKmh: number | null;
+  speed: number | null;
+  gust: number | null;
   directionDegrees: number | null;
   cardinal: string;
   airTempC: number | null;
+  feelsLikeTempC: number | null;
+  waterTempC: number | null;
   sourceLabel: string;
 };
 
 type BomForecastWindPoint = {
   timestamp: string;
-  speedKmh: number | null;
+  speed: number | null;
   directionDegrees: number | null;
   cardinal: string;
   airTempC: number | null;
+  weatherCode: number | null;
 };
 
 type BomLocationSearchPayload = {
@@ -52,6 +39,7 @@ type BomThreeHourlyForecastPayload = {
   data?: Array<{
     time?: string;
     temp?: number | string | null;
+    icon_descriptor?: string | null;
     wind?: {
       speed_kilometre?: number | string | null;
       speed_knot?: number | string | null;
@@ -80,29 +68,6 @@ type BomLocationObservationPayload = {
   };
 };
 
-type BomObservationJsonPayload = {
-  observations?: {
-    header?: Array<{
-      refresh_message?: string;
-      name?: string;
-      state_time_zone?: string;
-      time_zone?: string;
-      product_name?: string;
-      state?: string;
-    }>;
-    data?: Array<{
-      name?: string;
-      local_date_time_full?: string;
-      local_date_time?: string | number | null;
-      wind_spd_kt?: number | string | null;
-      gust_kt?: number | string | null;
-      wind_dir?: string | null;
-      air_temp?: number | string | null;
-      vis_km?: number | string | null;
-    }>;
-  };
-};
-
 function bomFetchUrl(url: string): string {
   const parsed = new URL(url);
   return url.startsWith('https://www.bom.gov.au')
@@ -117,17 +82,25 @@ function bomApiFetchUrl(path: string): string {
   return `/bom-api${path}`;
 }
 
+function weatherProxyBaseUrl(): string {
+  const configured = import.meta.env.VITE_WEATHER_PROXY_BASE_URL;
+  if (!configured || configured.trim().length === 0) {
+    throw new Error('Missing VITE_WEATHER_PROXY_BASE_URL');
+  }
+  return configured.replace(/\/+$/, '');
+}
+
 export async function searchLocations(query: string): Promise<LocationOption[]> {
   const trimmed = query.trim();
 
   if (!trimmed) {
-    return MOCK_LOCATIONS;
+    return [];
   }
 
   try {
+    // Primary geocoding for reliable suburb coordinates.
     const variants = buildQueryVariants(trimmed);
     const aggregate: LocationOption[] = [];
-
     for (const variant of variants) {
       const nominatimResults = dedupeLocationOptions(await fetchNominatimGeocode(variant));
       aggregate.push(...nominatimResults);
@@ -135,15 +108,14 @@ export async function searchLocations(query: string): Promise<LocationOption[]> 
         break;
       }
     }
+    const deduped = dedupeLocationOptions(aggregate).slice(0, 8);
+    if (deduped.length > 0) {
+      return deduped;
+    }
 
-    const deduped = dedupeLocationOptions(aggregate);
-    return dedupeLocationOptions(deduped).slice(0, 8);
+    return [];
   } catch {
-    // Fallback keeps location search usable when geocoding is unavailable.
-    const normalized = trimmed.toLowerCase();
-    return MOCK_LOCATIONS.filter((location) =>
-      `${location.name} ${location.region ?? ''}`.toLowerCase().includes(normalized),
-    );
+    return [];
   }
 }
 
@@ -316,83 +288,76 @@ export async function fetchMarineWeather(
   location: LocationOption,
   options?: { mockMode?: boolean },
 ): Promise<MarineConditionSet> {
-  if (options?.mockMode !== false) {
-    return buildMockMarineConditions(location);
-  }
+  void options;
   const resolvedLocation: LocationOption = {
     ...location,
     region: location.region ?? inferAustralianStateFromCoordinates(location.latitude, location.longitude) ?? undefined,
   };
-  const [weatherPayload, marinePayload, bomObservedWind, bomForecastWind] = await Promise.all([
-    fetchOpenMeteoWeather(resolvedLocation),
-    fetchOpenMeteoMarine(resolvedLocation),
+  const [bomObservedWind, bomForecastWind] = await Promise.all([
     fetchBomObservedWind(resolvedLocation),
     fetchBomDetailedWindForecast(resolvedLocation),
   ]);
   const bomForecastWeatherPayload =
     bomForecastWind !== null ? buildBomForecastWeatherPayload(bomForecastWind, bomObservedWind) : null;
-  const hourlyTime = weatherPayload.hourly?.time ?? [];
+  const hourlyTime = bomForecastWeatherPayload?.hourly?.time ?? [];
   const nowIndex = findNearestHourIndex(hourlyTime, new Date());
   const lookaheadIndex = Math.min(nowIndex + 3, hourlyTime.length - 1);
 
   const forecastMatch = bomForecastWind
     ? findNearestForecastWindPoint(hourlyTime[nowIndex] ?? new Date().toISOString(), bomForecastWind)
     : null;
-  const forecastSpeedKmh =
-    forecastMatch?.speedKmh ?? numberAt(weatherPayload.hourly?.wind_speed_10m, nowIndex);
-  const forecastGustKmh = numberAt(weatherPayload.hourly?.wind_gusts_10m, nowIndex);
-  const forecastDirectionDegrees =
-    forecastMatch?.directionDegrees ?? numberAt(weatherPayload.hourly?.wind_direction_10m, nowIndex);
-  const airTempC = forecastMatch?.airTempC ?? numberAt(weatherPayload.hourly?.temperature_2m, nowIndex);
-  const weatherCodeNow = numberAt(weatherPayload.hourly?.weather_code, nowIndex);
-  const weatherCodeSoon = numberAt(weatherPayload.hourly?.weather_code, lookaheadIndex);
+  const forecastSpeed = forecastMatch?.speed ?? null;
+  const forecastGust =
+    forecastSpeed === null ? null : Math.max(forecastSpeed, Math.round(forecastSpeed * 1.35));
+  const forecastDirectionDegrees = forecastMatch?.directionDegrees ?? null;
+  const airTempC = bomObservedWind?.airTempC ?? forecastMatch?.airTempC ?? null;
+  const feelsLikeTempC = bomObservedWind?.feelsLikeTempC ?? null;
+  const waterTempC = bomObservedWind?.waterTempC ?? null;
 
-  const speedKmh = bomObservedWind?.speedKmh ?? forecastSpeedKmh;
-  const gustKmh = bomObservedWind?.gustKmh ?? forecastGustKmh;
+  const speed = bomObservedWind?.speed ?? forecastSpeed;
+  const gust = bomObservedWind?.gust ?? forecastGust;
   const directionDegrees = bomObservedWind?.directionDegrees ?? forecastDirectionDegrees;
   const cardinal = bomObservedWind?.cardinal ?? degreesToCardinal(directionDegrees ?? 0);
-  const shoreRelation = getShoreRelation(location.id, directionDegrees ?? 0);
-  const thunderstormRisk = deriveThunderstormRisk(weatherCodeNow);
+  const shoreRelation = 'variable';
   const warnings: WarningInfo[] = [];
-
-  const hourly = buildLiveHourlyPoints(
-    weatherPayload,
-    marinePayload,
-    bomObservedWind,
-    bomForecastWind,
-    bomForecastWeatherPayload,
-    nowIndex,
-  );
+  const hourly = buildLiveHourlyPoints(bomForecastWeatherPayload, bomObservedWind, nowIndex);
 
   return {
     location,
     wind: {
-      speedKmh,
-      gustKmh,
+      speed,
+      gust,
       directionDegrees,
       cardinal,
       shoreRelation,
     },
     airTempC,
-    waterTempC: null,
+    feelsLikeTempC,
+    waterTempC,
     swellHeightM: null,
     visibilityKm: null,
     warnings,
     forecast: {
       summary: 'BOM forecast conditions.',
-      thunderstormRisk,
-      weatherChangingSoon: weatherCodeNow !== weatherCodeSoon || Math.abs((gustKmh ?? 0) - (speedKmh ?? 0)) > 8,
+      thunderstormRisk: 'none',
+      weatherChangingSoon:
+        (lookaheadIndex >= 0 &&
+          Math.abs(
+            (numberAt(bomForecastWeatherPayload?.hourly?.wind_speed_10m, lookaheadIndex) ?? speed ?? 0) -
+              (speed ?? 0),
+          ) > 8) ||
+        Math.abs((gust ?? 0) - (speed ?? 0)) > 8,
     },
     roughWater: false,
-    sourceLabel: bomObservedWind ? `BOM observations · ${bomObservedWind.sourceLabel}` : 'Open-Meteo weather',
+    sourceLabel: bomObservedWind ? `BOM observations · ${bomObservedWind.sourceLabel}` : 'BOM observations unavailable',
     forecastSourceLabel: bomForecastWind
-      ? `BOM place forecast · ${resolvedLocation.name}`
-      : 'Open-Meteo forecast',
+      ? `BOM forecast (worker) · ${resolvedLocation.name}`
+      : 'BOM forecast unavailable',
     hourly,
   };
 }
 
-type OpenMeteoWeatherPayload = {
+type BomWeatherPayload = {
   hourly?: {
     time?: string[];
     temperature_2m?: Array<number | null>;
@@ -405,210 +370,45 @@ type OpenMeteoWeatherPayload = {
   };
 };
 
-async function fetchOpenMeteoWeather(location: LocationOption): Promise<OpenMeteoWeatherPayload> {
-  const url = new URL('https://api.open-meteo.com/v1/forecast');
-  url.searchParams.set('latitude', String(location.latitude));
-  url.searchParams.set('longitude', String(location.longitude));
-  url.searchParams.set('hourly', 'temperature_2m,wind_speed_10m,wind_gusts_10m,wind_direction_10m,visibility,weather_code');
-  url.searchParams.set('timezone', 'auto');
-  url.searchParams.set('forecast_days', '2');
-
-  const response = await fetch(url.toString());
-  if (!response.ok) {
-    throw new Error('Live weather request failed.');
-  }
-
-  return (await response.json()) as OpenMeteoWeatherPayload;
-}
-
-type OpenMeteoMarinePayload = {
-  hourly?: {
-    wave_height?: number[];
-    swell_wave_height?: number[];
-    sea_surface_temperature?: number[];
-  };
-};
-
-async function fetchOpenMeteoMarine(location: LocationOption): Promise<OpenMeteoMarinePayload> {
-  const url = new URL('https://marine-api.open-meteo.com/v1/marine');
-  url.searchParams.set('latitude', String(location.latitude));
-  url.searchParams.set('longitude', String(location.longitude));
-  url.searchParams.set('hourly', 'wave_height,swell_wave_height,sea_surface_temperature');
-  url.searchParams.set('forecast_days', '2');
-  url.searchParams.set('timezone', 'auto');
-
-  const response = await fetch(url.toString());
-  if (!response.ok) {
-    throw new Error('Live marine request failed.');
-  }
-
-  return (await response.json()) as OpenMeteoMarinePayload;
-}
-
-function buildMockMarineConditions(location: LocationOption): MarineConditionSet {
-  const seed = Math.abs(
-    Math.round(location.latitude * 100) +
-      Math.round(location.longitude * 100) +
-      new Date().getHours() * 13,
-  );
-
-  const windSpeedKmh = 8 + (seed % 16);
-  const gustKmh = windSpeedKmh + 5 + (seed % 12);
-  const directionDegrees = seed % 360;
-  const shoreRelation = getShoreRelation(location.id, directionDegrees);
-  const warningActive = seed % 13 === 0;
-  const thunderstormRisk = warningActive
-    ? 'moderate'
-    : seed % 9 === 0
-      ? 'low'
-      : 'none';
-
-  const now = new Date();
-  const hourly = Array.from({ length: 48 }, (_, i) => {
-    const slot = new Date(now);
-    slot.setMinutes(0, 0, 0);
-    slot.setHours(slot.getHours() + i + 1);
-    const variation = Math.sin((slot.getHours() + seed) / 3);
-    const speed = clamp(Math.round(windSpeedKmh + variation * 4 + i * 0.2), 0, 60);
-    return {
-      timestamp: slot.toISOString(),
-      windSpeedKmh: speed,
-      windGustKmh: clamp(speed + 5 + (i % 4), speed, 75),
-      windDirectionDegrees: (directionDegrees + i * 7) % 360,
-      airTempC: 16 + (seed % 13),
-      waterTempC: 14 + (seed % 8),
-      swellHeightM: Number((0.2 + ((seed % 15) / 10)).toFixed(1)),
-      visibilityKm: 4 + (seed % 18),
-      weatherCode: seed % 9 === 0 ? 80 : 1,
-    } satisfies MarineHourlyPoint;
-  });
-
-  return {
-    location,
-    wind: {
-      speedKmh: windSpeedKmh,
-      gustKmh,
-      directionDegrees,
-      cardinal: degreesToCardinal(directionDegrees),
-      shoreRelation,
-    },
-    airTempC: 16 + (seed % 13),
-    waterTempC: 14 + (seed % 8),
-    swellHeightM: Number((0.2 + ((seed % 15) / 10)).toFixed(1)),
-    visibilityKm: 4 + (seed % 18),
-    warnings: warningActive
-      ? [{ title: 'Marine wind warning', severity: 'warning', active: true }]
-      : [],
-    forecast: {
-      summary:
-        thunderstormRisk === 'none'
-          ? 'Mostly steady conditions through the next few hours.'
-          : 'Conditions may shift later today with unstable weather nearby.',
-      thunderstormRisk,
-      weatherChangingSoon: seed % 5 === 0,
-    },
-    roughWater: seed % 7 === 0,
-    sourceLabel: 'Mock marine conditions',
-    forecastSourceLabel: 'Mock marine forecast',
-    hourly,
-  };
-}
-
-function getShoreRelation(locationId: string, windDirectionDegrees: number): ShoreRelation {
-  const coastOrientation = coastOrientationByLocation[locationId];
-  if (coastOrientation === undefined) {
-    return 'variable';
-  }
-
-  const delta = smallestAngleDifference(windDirectionDegrees, coastOrientation);
-  if (delta <= 35) {
-    return 'onshore';
-  }
-  if (delta >= 145) {
-    return 'offshore';
-  }
-  return 'cross-shore';
-}
-
-function smallestAngleDifference(a: number, b: number): number {
-  const diff = Math.abs(a - b) % 360;
-  return diff > 180 ? 360 - diff : diff;
-}
-
 function degreesToCardinal(degrees: number): string {
   const cardinals = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
   return cardinals[Math.round(degrees / 45) % 8];
 }
 
 function buildLiveHourlyPoints(
-  weatherPayload: OpenMeteoWeatherPayload,
-  marinePayload: OpenMeteoMarinePayload,
+  bomForecastWeatherPayload: BomWeatherPayload | null,
   bomObservedWind: BomObservedWind | null,
-  bomForecastWind: BomForecastWindPoint[] | null,
-  bomForecastWeatherPayload: OpenMeteoWeatherPayload | null,
   currentIndex: number,
 ): MarineHourlyPoint[] {
-  const sourceWeatherPayload = bomForecastWeatherPayload ?? weatherPayload;
-  const times = sourceWeatherPayload.hourly?.time ?? [];
+  const times = bomForecastWeatherPayload?.hourly?.time ?? [];
   const points = times.map((timestamp, index) => {
-    const waveHeight = firstDefinedNumber(
-      numberAt(marinePayload.hourly?.wave_height, index),
-      numberAt(marinePayload.hourly?.swell_wave_height, index),
-    );
-
     return {
       timestamp,
-      windSpeedKmh: numberAt(sourceWeatherPayload.hourly?.wind_speed_10m, index),
-      windGustKmh: numberAt(sourceWeatherPayload.hourly?.wind_gusts_10m, index),
-      windDirectionDegrees: numberAt(sourceWeatherPayload.hourly?.wind_direction_10m, index),
-      isWindForecastPoint: bomForecastWeatherPayload
-        ? Boolean(sourceWeatherPayload.hourly?.is_wind_forecast_point?.[index])
-        : true,
-      airTempC: numberAt(sourceWeatherPayload.hourly?.temperature_2m, index),
-      waterTempC: numberAt(marinePayload.hourly?.sea_surface_temperature, index),
-      swellHeightM: waveHeight,
-      visibilityKm:
-        numberAt(sourceWeatherPayload.hourly?.visibility, index) === null
-          ? null
-          : Number(((numberAt(sourceWeatherPayload.hourly?.visibility, index) ?? 0) / 1000).toFixed(1)),
-      weatherCode: numberAt(sourceWeatherPayload.hourly?.weather_code, index),
+      windSpeed: numberAt(bomForecastWeatherPayload?.hourly?.wind_speed_10m, index),
+      windGust: numberAt(bomForecastWeatherPayload?.hourly?.wind_gusts_10m, index),
+      windDirectionDegrees: numberAt(bomForecastWeatherPayload?.hourly?.wind_direction_10m, index),
+      isWindForecastPoint: Boolean(bomForecastWeatherPayload?.hourly?.is_wind_forecast_point?.[index]),
+      airTempC: numberAt(bomForecastWeatherPayload?.hourly?.temperature_2m, index),
+      feelsLikeTempC: null,
+      waterTempC: null,
+      swellHeightM: null,
+      visibilityKm: null,
+      weatherCode: numberAt(bomForecastWeatherPayload?.hourly?.weather_code, index),
     };
   });
 
-  if (!bomForecastWind || bomForecastWind.length === 0) {
-    return points.map((point, index) => {
-      if (index !== currentIndex || !bomObservedWind) {
-        return point;
-      }
-
-      return {
-        ...point,
-        windSpeedKmh: bomObservedWind.speedKmh ?? point.windSpeedKmh,
-        windGustKmh: bomObservedWind.gustKmh ?? point.windGustKmh,
-        windDirectionDegrees: bomObservedWind.directionDegrees ?? point.windDirectionDegrees,
-      };
-    });
-  }
-
-  if (bomForecastWeatherPayload) {
-    return points;
-  }
-
   return points.map((point, index) => {
-    const forecastMatch = findNearestForecastWindPoint(point.timestamp, bomForecastWind);
-    const observedOverride = index === currentIndex ? bomObservedWind : null;
-    const speedKmh = observedOverride?.speedKmh ?? forecastMatch?.speedKmh ?? point.windSpeedKmh;
+    if (index !== currentIndex || !bomObservedWind) {
+      return point;
+    }
+
     return {
       ...point,
-      windSpeedKmh: speedKmh,
-      windDirectionDegrees:
-        observedOverride?.directionDegrees ?? forecastMatch?.directionDegrees ?? point.windDirectionDegrees,
-      airTempC: forecastMatch?.airTempC ?? point.airTempC,
-      windGustKmh:
-        observedOverride?.gustKmh ??
-        (speedKmh === null
-          ? point.windGustKmh
-          : Math.max(speedKmh, Math.round(speedKmh * 1.4))),
+      windSpeed: bomObservedWind.speed ?? point.windSpeed,
+      windGust: bomObservedWind.gust ?? point.windGust,
+      windDirectionDegrees: bomObservedWind.directionDegrees ?? point.windDirectionDegrees,
+      airTempC: bomObservedWind.airTempC ?? point.airTempC,
+      feelsLikeTempC: bomObservedWind.feelsLikeTempC ?? point.feelsLikeTempC,
     };
   });
 }
@@ -616,7 +416,7 @@ function buildLiveHourlyPoints(
 function buildBomForecastWeatherPayload(
   points: BomForecastWindPoint[],
   observed: BomObservedWind | null,
-): OpenMeteoWeatherPayload {
+): BomWeatherPayload {
   const now = new Date();
   const sortedPoints = [...points].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
   const start = roundToCurrentHour(now);
@@ -632,15 +432,15 @@ function buildBomForecastWeatherPayload(
   for (let hour = 0; hour < 36; hour += 1) {
     const slot = addHours(start, hour);
     const match = findExactForecastWindPoint(slot.toISOString(), sortedPoints);
-    const speedKmh = match?.speedKmh ?? observed?.speedKmh ?? null;
+    const speed = match?.speed ?? observed?.speed ?? null;
     hourlyTimes.push(slot.toISOString());
     temperature2m.push(match?.airTempC ?? observed?.airTempC ?? null);
-    windSpeed10m.push(match ? speedKmh : null);
-    windGusts10m.push(match ? (speedKmh === null ? null : Math.max(speedKmh, Math.round(speedKmh * 1.35))) : null);
+    windSpeed10m.push(match ? speed : null);
+    windGusts10m.push(match ? (speed === null ? null : Math.max(speed, Math.round(speed * 1.35))) : null);
     windDirection10m.push(match?.directionDegrees ?? null);
-    isWindForecastPoint.push(Boolean(match && speedKmh !== null));
+    isWindForecastPoint.push(Boolean(match && speed !== null));
     visibility.push(null);
-    weatherCode.push(null);
+    weatherCode.push(match?.weatherCode ?? null);
   }
 
   return {
@@ -659,21 +459,76 @@ function buildBomForecastWeatherPayload(
 
 async function fetchBomObservedWind(location: LocationOption): Promise<BomObservedWind | null> {
   try {
-    const coastalStation = resolveStaticCoastalStation(location);
-    if (coastalStation) {
-      const observedFromCoastalStation = await fetchBomObservedWindFromJsonUrl(coastalStation.observationUrl);
-      if (observedFromCoastalStation) {
-        return {
-          ...observedFromCoastalStation,
-          sourceLabel: coastalStation.stationName,
-        };
-      }
+    const base = weatherProxyBaseUrl();
+    const stateCode =
+      normalizeAustralianStateCode(location.region) ??
+      inferAustralianStateFromCoordinates(location.latitude, location.longitude);
+    if (!stateCode) return null;
+    const stationResponse = await fetch(
+      `${base}/resolve-station?query=${encodeURIComponent(location.name)}&state=${encodeURIComponent(stateCode)}`,
+    );
+    if (!stationResponse.ok) return null;
+    const stationPayload = (await stationResponse.json()) as {
+      station?: { geohash?: string; id?: string; name?: string };
+    };
+    const stationId = stationPayload.station?.geohash ?? stationPayload.station?.id;
+    if (!stationId) return null;
+    const observationResponse = await fetch(`${base}/observations?stationId=${encodeURIComponent(stationId)}`);
+    if (!observationResponse.ok) return null;
+    const payload = (await observationResponse.json()) as {
+      temp_air_c?: number | null;
+      temp_feels_like_c?: number | null;
+      temp_water_c?: number | null;
+      wind?: { speed_knot?: number | null; gust_knot?: number | null; direction?: string | null };
+      station?: { name?: string };
+    };
+    const speed = parseMaybeNumber(payload.wind?.speed_knot == null ? undefined : String(payload.wind.speed_knot));
+    const gust = parseMaybeNumber(payload.wind?.gust_knot == null ? undefined : String(payload.wind.gust_knot));
+    const direction = extractCardinal(payload.wind?.direction ?? '');
+    if (speed === null && direction === null) return null;
+    const primaryObservation: BomObservedWind = {
+      speed,
+      gust,
+      directionDegrees:
+        direction === null || direction === 'CALM' || direction === 'VRB' ? null : cardinalToDegrees(direction),
+      cardinal: direction === null || direction === 'CALM' || direction === 'VRB' ? 'Calm' : direction,
+      airTempC: parseMaybeNumber(payload.temp_air_c == null ? undefined : String(payload.temp_air_c)),
+      feelsLikeTempC: parseMaybeNumber(
+        payload.temp_feels_like_c == null ? undefined : String(payload.temp_feels_like_c),
+      ),
+      waterTempC: parseMaybeNumber(payload.temp_water_c == null ? undefined : String(payload.temp_water_c)),
+      sourceLabel: stationPayload.station?.name?.trim() || payload.station?.name?.trim() || 'BOM station',
+    };
+    if (primaryObservation.airTempC !== null || primaryObservation.waterTempC !== null) {
+      return primaryObservation;
     }
-
-    return await fetchBomApiObservedWind(location);
+    const fallbackTemps = await fetchBomApiTemperature(location);
+    if (!fallbackTemps) {
+      return primaryObservation;
+    }
+    return {
+      ...primaryObservation,
+      airTempC: fallbackTemps.airTempC,
+      feelsLikeTempC: primaryObservation.feelsLikeTempC,
+      waterTempC: fallbackTemps.waterTempC,
+      sourceLabel: primaryObservation.sourceLabel,
+    };
   } catch {
     return null;
   }
+}
+
+async function fetchBomApiTemperature(
+  location: LocationOption,
+): Promise<{ airTempC: number | null; waterTempC: number | null } | null> {
+  const fallbackObservation = await fetchBomApiObservedWind(location);
+  if (!fallbackObservation) {
+    return null;
+  }
+  return {
+    airTempC: fallbackObservation.airTempC,
+    waterTempC: fallbackObservation.waterTempC,
+  };
 }
 
 async function fetchBomApiObservedWind(location: LocationOption): Promise<BomObservedWind | null> {
@@ -701,164 +556,33 @@ async function fetchBomApiObservedWind(location: LocationOption): Promise<BomObs
     return null;
   }
 
-  const speedKmh = firstDefinedNumber(
+  const speed = firstDefinedNumber(
+    parseMaybeNumber(observation.wind.speed_knot === undefined ? undefined : String(observation.wind.speed_knot)),
     parseMaybeNumber(observation.wind.speed_kilometre === undefined ? undefined : String(observation.wind.speed_kilometre)),
-    parseMaybeNumber(observation.wind.speed_knot === undefined ? undefined : String(observation.wind.speed_knot)) === null
-      ? null
-      : roundToTenths((parseMaybeNumber(String(observation.wind.speed_knot)) ?? 0) * 1.852),
   );
-  const gustKmh = firstDefinedNumber(
+  const gust = firstDefinedNumber(
+    parseMaybeNumber(observation.gust?.speed_knot === undefined ? undefined : String(observation.gust.speed_knot)),
     parseMaybeNumber(observation.gust?.speed_kilometre === undefined ? undefined : String(observation.gust.speed_kilometre)),
-    parseMaybeNumber(observation.gust?.speed_knot === undefined ? undefined : String(observation.gust.speed_knot)) === null
-      ? null
-      : roundToTenths((parseMaybeNumber(String(observation.gust?.speed_knot)) ?? 0) * 1.852),
   );
   const direction = extractCardinal(observation.wind.direction ?? '');
 
-  if (speedKmh === null && direction === null) {
+  if (speed === null && direction === null) {
     return null;
   }
 
   return {
-    speedKmh,
-    gustKmh,
+    speed,
+    gust,
     directionDegrees:
       direction === null || direction === 'CALM' || direction === 'VRB'
         ? null
         : cardinalToDegrees(direction),
     cardinal: direction === null || direction === 'CALM' || direction === 'VRB' ? 'Calm' : direction,
     airTempC: parseMaybeNumber(observation.temp === undefined ? undefined : String(observation.temp)),
+    feelsLikeTempC: null,
+    waterTempC: null,
     sourceLabel: observation.station?.name?.trim() || 'BOM location observation',
   };
-}
-
-function resolveStaticCoastalStation(location: LocationOption): CoastalStation | null {
-  const stateCode =
-    normalizeAustralianStateCode(location.region) ??
-    inferAustralianStateFromCoordinates(location.latitude, location.longitude);
-  const candidates = coastalStations.filter((station) => !stateCode || station.state === stateCode);
-  if (candidates.length === 0) {
-    return null;
-  }
-
-  const locationTokens = buildLocationMatchTokens(location);
-  const aliasMatch = candidates.find((station) =>
-    station.aliases.some((alias) => locationTokens.has(normalizeStationAlias(alias))),
-  );
-  if (aliasMatch) {
-    return aliasMatch;
-  }
-
-  const nearest = candidates
-    .map((station) => ({
-      station,
-      distance: haversineDistanceKm(location.latitude, location.longitude, station.latitude, station.longitude),
-    }))
-    .sort((a, b) => a.distance - b.distance)[0];
-
-  return nearest && nearest.distance <= 30 ? nearest.station : null;
-}
-
-function buildLocationMatchTokens(location: LocationOption): Set<string> {
-  const baseName = location.name.split(',')[0] ?? location.name;
-  return new Set(
-    [location.name, baseName, `${baseName} ${location.region ?? ''}`]
-      .map(normalizeStationAlias)
-      .filter((value) => value.length > 0),
-  );
-}
-
-function normalizeStationAlias(value: string): string {
-  return normalizeText(value)
-    .toLowerCase()
-    .replace(/\b(vic|victoria|nsw|qld|queensland|wa|western australia|sa|south australia|tas|tasmania|nt|northern territory)\b/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-async function fetchBomObservedWindFromJsonUrl(stationPageUrl: string): Promise<BomObservedWind | null> {
-  const jsonUrl = stationPageUrl.replace(/\/products\//, '/fwo/').replace(/\.shtml$/i, '.json');
-  try {
-    const response = await fetch(bomFetchUrl(jsonUrl));
-    if (!response.ok) {
-      return null;
-    }
-
-    const payload = (await response.json()) as BomObservationJsonPayload;
-    return parseBomObservationJson(payload);
-  } catch {
-    return null;
-  }
-}
-
-function parseBomObservationJson(payload: BomObservationJsonPayload): BomObservedWind | null {
-  const first = getLatestBomObservationRow(payload.observations?.data ?? []);
-  if (!first) {
-    return null;
-  }
-
-  const speedKts = parseMaybeNumber(String(first.wind_spd_kt ?? ''));
-  const gustKts = parseMaybeNumber(String(first.gust_kt ?? ''));
-  const direction = extractCardinal(String(first.wind_dir ?? ''));
-  const airTempC = parseMaybeNumber(String(first.air_temp ?? ''));
-
-  return {
-    speedKmh: speedKts === null ? null : roundToTenths(speedKts * 1.852),
-    gustKmh: gustKts === null ? null : roundToTenths(gustKts * 1.852),
-    directionDegrees:
-      direction === null || direction === 'CALM' || direction === 'VRB'
-        ? null
-        : cardinalToDegrees(direction),
-    cardinal:
-      direction === null ? 'Calm' : direction === 'CALM' || direction === 'VRB' ? 'Calm' : direction,
-    airTempC,
-    sourceLabel: first.name?.trim() || payload.observations?.header?.[0]?.name?.trim() || 'BOM station',
-  };
-}
-
-function getLatestBomObservationRow(
-  rows: NonNullable<BomObservationJsonPayload['observations']>['data'],
-): NonNullable<NonNullable<BomObservationJsonPayload['observations']>['data']>[number] | null {
-  if (!rows || rows.length === 0) {
-    return null;
-  }
-
-  const ranked = rows
-    .map((row, index) => ({
-      row,
-      index,
-      timestamp: parseBomObservationTimestamp(row),
-    }))
-    .sort((a, b) => {
-      if (a.timestamp !== b.timestamp) {
-        return b.timestamp - a.timestamp;
-      }
-      return a.index - b.index;
-    });
-
-  return ranked[0]?.row ?? null;
-}
-
-function parseBomObservationTimestamp(
-  row: NonNullable<NonNullable<BomObservationJsonPayload['observations']>['data']>[number],
-): number {
-  const full = String(row.local_date_time_full ?? '').trim();
-  if (full) {
-    const parsed = Number(full.replace(/\D/g, ''));
-    if (Number.isFinite(parsed) && parsed > 0) {
-      return parsed;
-    }
-  }
-
-  const local = String(row.local_date_time ?? '').trim();
-  if (local) {
-    const parsed = Number(local.replace(/\D/g, ''));
-    if (Number.isFinite(parsed) && parsed > 0) {
-      return parsed;
-    }
-  }
-
-  return 0;
 }
 
 function normalizeAustralianStateCode(region: string | undefined): string | null {
@@ -904,38 +628,43 @@ function buildBomPlaceForecastDetailedUrl(stateCode: string, slug: string): stri
 }
 
 async function fetchBomDetailedWindForecast(location: LocationOption): Promise<BomForecastWindPoint[] | null> {
-  const apiPoints = await fetchBomThreeHourlyWindForecast(location);
-  if (apiPoints && apiPoints.length > 0) {
-    return apiPoints;
-  }
-
   const stateCode =
     normalizeAustralianStateCode(location.region) ??
     inferAustralianStateFromCoordinates(location.latitude, location.longitude);
-  if (!stateCode) {
+  if (!stateCode) return null;
+  try {
+    const base = weatherProxyBaseUrl();
+    const response = await fetch(
+      `${base}/forecast?locationId=${encodeURIComponent(location.id)}&state=${encodeURIComponent(
+        stateCode,
+      )}&name=${encodeURIComponent(location.name)}`,
+    );
+    if (!response.ok) return null;
+    const payload = (await response.json()) as {
+      points?: Array<{ speed_knot?: number | null; direction?: string | null; time_iso?: string }>;
+      source_type?: string;
+    };
+    const parsed = (payload.points ?? [])
+      .map((item): BomForecastWindPoint | null => {
+        if (!item.time_iso) return null;
+        const slot = new Date(item.time_iso);
+        if (Number.isNaN(slot.getTime())) return null;
+        const direction = extractCardinal(item.direction ?? '');
+        return {
+          timestamp: slot.toISOString(),
+          speed: parseMaybeNumber(item.speed_knot == null ? undefined : String(item.speed_knot)),
+          directionDegrees:
+            direction === null || direction === 'CALM' || direction === 'VRB' ? null : cardinalToDegrees(direction),
+          cardinal: direction ?? 'Calm',
+          airTempC: null,
+          weatherCode: null,
+        };
+      })
+      .filter((point): point is BomForecastWindPoint => point !== null && point.speed !== null);
+    return parsed.length > 0 ? parsed : null;
+  } catch {
     return null;
   }
-
-  const slugCandidates = buildBomPlaceSlugCandidates(location);
-  for (const slug of slugCandidates) {
-    const pageUrl = buildBomPlaceForecastDetailedUrl(stateCode, slug);
-    try {
-      const response = await fetch(bomFetchUrl(pageUrl));
-      if (!response.ok) {
-        continue;
-      }
-
-      const html = await response.text();
-      const points = extractBomDetailedWindForecast(html);
-      if (points.length > 0) {
-        return points;
-      }
-    } catch {
-      // Try the next slug candidate.
-    }
-  }
-
-  return null;
 }
 
 async function fetchBomThreeHourlyWindForecast(location: LocationOption): Promise<BomForecastWindPoint[] | null> {
@@ -966,15 +695,13 @@ async function fetchBomThreeHourlyWindForecast(location: LocationOption): Promis
           return null;
         }
 
-        const speedKmh = firstDefinedNumber(
+        const speed = firstDefinedNumber(
+          parseMaybeNumber(item.wind.speed_knot === undefined ? undefined : String(item.wind.speed_knot)),
           parseMaybeNumber(item.wind.speed_kilometre === undefined ? undefined : String(item.wind.speed_kilometre)),
-          parseMaybeNumber(item.wind.speed_knot === undefined ? undefined : String(item.wind.speed_knot)) === null
-            ? null
-            : roundToTenths((parseMaybeNumber(String(item.wind.speed_knot)) ?? 0) * 1.852),
         );
         const direction = extractCardinal(item.wind.direction ?? '');
         const timestamp = new Date(item.time);
-        if (speedKmh === null || Number.isNaN(timestamp.getTime())) {
+        if (speed === null || Number.isNaN(timestamp.getTime())) {
           return null;
         }
         if (!isBomDetailedForecastHour(timestamp)) {
@@ -983,13 +710,14 @@ async function fetchBomThreeHourlyWindForecast(location: LocationOption): Promis
 
         return {
           timestamp: timestamp.toISOString(),
-          speedKmh,
+          speed,
           directionDegrees:
             direction === null || direction === 'CALM' || direction === 'VRB'
               ? null
               : cardinalToDegrees(direction),
           cardinal: direction === null ? 'Calm' : direction === 'CALM' || direction === 'VRB' ? 'Calm' : direction,
           airTempC: parseMaybeNumber(item.temp === undefined ? undefined : String(item.temp)),
+          weatherCode: mapBomIconDescriptorToWeatherCode(item.icon_descriptor),
         };
       })
       .filter((point): point is BomForecastWindPoint => point !== null);
@@ -1003,6 +731,16 @@ async function fetchBomThreeHourlyWindForecast(location: LocationOption): Promis
 function isBomDetailedForecastHour(timestamp: Date): boolean {
   const detailedForecastHours = new Set([1, 4, 7, 10, 13, 16, 19, 22]);
   return timestamp.getMinutes() === 0 && detailedForecastHours.has(timestamp.getHours());
+}
+
+function mapBomIconDescriptorToWeatherCode(descriptor: string | null | undefined): number | null {
+  if (!descriptor) return null;
+  const value = descriptor.trim().toLowerCase();
+  if (!value) return null;
+  if (value.includes('rain') || value.includes('shower') || value.includes('storm')) return 63;
+  if (value.includes('cloud') || value.includes('overcast') || value.includes('fog')) return 3;
+  if (value.includes('clear') || value.includes('sunny')) return 0;
+  return null;
 }
 
 async function resolveBomForecastLocation(
@@ -1132,13 +870,14 @@ function parseBomDetailedWindForecastTable(
 
     points.push({
       timestamp: setBomTimeOnDate(dayDate, timeLabel).toISOString(),
-      speedKmh: speedKts === null ? null : roundToTenths(speedKts * 1.852),
+      speed: speedKts,
       directionDegrees:
         direction === null || direction === 'CALM' || direction === 'VRB'
           ? null
           : cardinalToDegrees(direction),
       cardinal: direction === null ? 'Calm' : direction === 'CALM' || direction === 'VRB' ? 'Calm' : direction,
       airTempC: parseMaybeNumber(temperatureCell),
+      weatherCode: null,
     });
   }
 

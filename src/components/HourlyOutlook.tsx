@@ -35,7 +35,7 @@ export function HourlyOutlook({ items, embedded = false }: HourlyOutlookProps) {
     );
   }
 
-  const maxWind = Math.max(20, ...items.map((item) => (item.windKmh === null ? 0 : toKnots(item.windKmh))));
+  const maxWind = Math.max(20, ...items.map((item) => (item.windSpeed === null ? 0 : Math.round(item.windSpeed))));
   const yMax = Math.ceil(maxWind / 5) * 5;
   const yTickCount = 4;
   const yTicks = Array.from({ length: yTickCount + 1 }, (_, index) =>
@@ -46,24 +46,30 @@ export function HourlyOutlook({ items, embedded = false }: HourlyOutlookProps) {
 
   const points = items.map((item, index) => {
     const x = GRAPH.left + index * xStep;
-    const windKnots = item.windKmh === null ? null : toKnots(item.windKmh);
+    const windKnots = item.windSpeed === null ? null : Math.round(item.windSpeed);
     const y = windKnots === null ? null : GRAPH.top + (1 - windKnots / yMax) * yRange;
-    const tideY = GRAPH.top + (1 - (item.tideLevel + 1) / 2) * yRange;
+    const tideY =
+      item.tideLevel === null ? null : GRAPH.top + (1 - (item.tideLevel + 1) / 2) * yRange;
     return { ...item, windKnots, x, y, tideY };
   });
   const daylightSegments = getDaylightSegments(points, xStep, GRAPH.left, renderWidth - GRAPH.right);
   const nightSegments = getNightSegments(points, xStep, GRAPH.left, renderWidth - GRAPH.right);
   const sunTransitions = getSunTransitions(points);
 
-  const tidePath = buildSmoothPath(
-    points.map((point) => ({ x: point.x, y: point.tideY })),
-  );
+  const hasTideData = points.some((point) => point.tideLevel !== null && point.tideY !== null);
+  const tidePath = hasTideData
+    ? buildSmoothPath(
+        points
+          .filter((point): point is typeof point & { tideY: number } => point.tideY !== null)
+          .map((point) => ({ x: point.x, y: point.tideY })),
+      )
+    : '';
   const windPath = buildSmoothPath(
     points
       .filter((point): point is typeof point & { windKnots: number; y: number } => point.windKnots !== null && point.y !== null)
       .map((point) => ({ x: point.x, y: point.y })),
   );
-  const tideExtremes = getTideExtremes(points, GRAPH.top, yRange, xStep);
+  const tideExtremes = hasTideData ? getTideExtremes(points, GRAPH.top, yRange, xStep) : [];
   const dayBreaks = points
     .map((point, index) => ({ point, index }))
     .filter(({ index, point }) => {
@@ -212,7 +218,7 @@ export function HourlyOutlook({ items, embedded = false }: HourlyOutlookProps) {
           />
         ))}
 
-        <path d={tidePath} className="hourly-tide-line" />
+        {hasTideData && tidePath && <path d={tidePath} className="hourly-tide-line" />}
         {tideExtremes.map((extreme) => (
           <g
             key={`tide-extreme-${extreme.key}`}
@@ -244,7 +250,7 @@ export function HourlyOutlook({ items, embedded = false }: HourlyOutlookProps) {
               cx={point.x}
               cy={point.y ?? GRAPH.top + yRange}
               r={4}
-              className={`hourly-point hourly-point--${point.status} ${point.isInterpolatedWind ? 'hourly-point--interpolated' : ''}`}
+              className={`hourly-point ${point.isInterpolatedWind ? 'hourly-point--interpolated' : `hourly-point--${point.status}`}`}
               onMouseEnter={() => setActiveTimestamp(point.timestamp)}
               onMouseLeave={() => setActiveTimestamp(null)}
               onClick={() => setActiveTimestamp(point.timestamp)}
@@ -258,7 +264,7 @@ export function HourlyOutlook({ items, embedded = false }: HourlyOutlookProps) {
             <g
               key={point.timestamp}
               transform={`translate(${point.x} ${point.y ?? GRAPH.top + yRange}) rotate(${point.windDirectionDegrees + 180})`}
-              className={`hourly-point hourly-point--${point.status} ${point.isInterpolatedWind ? 'hourly-point--interpolated' : ''}`}
+              className={`hourly-point ${point.isInterpolatedWind ? 'hourly-point--interpolated' : `hourly-point--${point.status}`}`}
               onMouseEnter={() => setActiveTimestamp(point.timestamp)}
               onMouseLeave={() => setActiveTimestamp(null)}
               onClick={() => setActiveTimestamp(point.timestamp)}
@@ -282,7 +288,7 @@ export function HourlyOutlook({ items, embedded = false }: HourlyOutlookProps) {
 
         {activePoint && (
           <g
-            className={`hourly-tooltip hourly-tooltip--${activePoint.status} ${activePoint.isInterpolatedWind ? 'hourly-tooltip--interpolated' : ''}`}
+            className={`hourly-tooltip ${activePoint.isInterpolatedWind ? 'hourly-tooltip--interpolated' : `hourly-tooltip--${activePoint.status}`}`}
             transform={`translate(${tooltipX} ${activePointY - 20})`}
           >
             <rect x={-42} y={-18} width={84} height={24} rx={12} ry={12} />
@@ -321,7 +327,6 @@ export function HourlyOutlook({ items, embedded = false }: HourlyOutlookProps) {
         )}
         </svg>
       </div>
-
     </Wrapper>
   );
 }
@@ -417,21 +422,25 @@ function getSunTransitions(
 }
 
 function getTideExtremes(
-  points: Array<{ timestamp: string; x: number; tideY: number; tideLevel: number }>,
+  points: Array<{ timestamp: string; x: number; tideY: number | null; tideLevel: number | null }>,
   graphTop: number,
   yRange: number,
   xStep: number,
 ): Array<{ key: string; timestamp: string; x: number; y: number; type: 'high' | 'low' }> {
-  if (points.length < 3) {
+  const tidePoints = points.filter(
+    (point): point is { timestamp: string; x: number; tideY: number; tideLevel: number } =>
+      point.tideY !== null && point.tideLevel !== null,
+  );
+  if (tidePoints.length < 3) {
     return [];
   }
 
   const output: Array<{ key: string; timestamp: string; x: number; y: number; type: 'high' | 'low' }> = [];
 
-  for (let i = 1; i < points.length - 1; i += 1) {
-    const prev = points[i - 1];
-    const curr = points[i];
-    const next = points[i + 1];
+  for (let i = 1; i < tidePoints.length - 1; i += 1) {
+    const prev = tidePoints[i - 1];
+    const curr = tidePoints[i];
+    const next = tidePoints[i + 1];
     const isHigh = curr.tideLevel >= prev.tideLevel && curr.tideLevel > next.tideLevel;
     const isLow = curr.tideLevel <= prev.tideLevel && curr.tideLevel < next.tideLevel;
 
@@ -486,10 +495,6 @@ function formatHour(value: string): string {
     hour12: true,
   }).formatToParts(new Date(value));
   return parts.find((part) => part.type === 'hour')?.value ?? '';
-}
-
-function toKnots(speedKmh: number): number {
-  return Math.round(speedKmh * 0.539957);
 }
 
 function degreesToCardinal(degrees: number): string {

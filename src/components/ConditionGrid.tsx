@@ -8,8 +8,8 @@ export function ConditionGrid({ conditions }: ConditionGridProps) {
   const { marine, tide, sun } = conditions;
 
   const items = [
-    ['Wind', marine.wind.speedKmh !== null ? `${marine.wind.speedKmh} km/h` : 'Unavailable'],
-    ['Gusts', marine.wind.gustKmh !== null ? `${marine.wind.gustKmh} km/h` : 'Unavailable'],
+    ['Wind', marine.wind.speed !== null ? `${marine.wind.speed} kn` : 'Unavailable'],
+    ['Gusts', marine.wind.gust !== null ? `${marine.wind.gust} kn` : 'Unavailable'],
     ['Direction', `${marine.wind.cardinal} • ${formatShoreRelation(marine.wind.shoreRelation)}`],
     ['Air temp', marine.airTempC !== null ? `${marine.airTempC}°C` : 'Unavailable'],
     ['Water temp', marine.waterTempC !== null ? `${marine.waterTempC}°C` : 'Unavailable'],

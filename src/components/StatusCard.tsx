@@ -1,4 +1,4 @@
-import { useEffect, useState, type CSSProperties } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { HourlyOutlook } from './HourlyOutlook';
 import type { HourlyOutlookItem } from '../lib/hourlyOutlook';
 import type { DecisionResult, LocationOption, MarineConditionSet } from '../types/conditions';
@@ -11,6 +11,7 @@ type StatusCardProps = {
   onUseCurrentLocation: () => void;
   onSearchLocation: (query: string) => Promise<LocationOption[]>;
   onPickLocation: (location: LocationOption) => void;
+  recentLocations: LocationOption[];
   locationOptions: LocationOption[];
   searchingLocations: boolean;
 };
@@ -30,15 +31,16 @@ export function StatusCard({
   onUseCurrentLocation,
   onSearchLocation,
   onPickLocation,
+  recentLocations,
   locationOptions,
   searchingLocations,
 }: StatusCardProps) {
   const meta = loading ? loadingMeta : statusMeta[decision.status];
   const direction = getArrowRotation(marine.wind.directionDegrees, marine.wind.cardinal);
-  const windSpeedKnots = toKnots(marine.wind.speedKmh);
-  const isCalm = windSpeedKnots === '0';
+  const windSpeedLabel = formatWindSpeed(marine.wind.speed);
+  const isCalm = windSpeedLabel === '0';
   const windDirectionLabel = isCalm ? 'Calm' : marine.wind.cardinal;
-  const stationLabel = loading ? '---' : getStationLabel(marine.sourceLabel);
+  const currentWeatherCode = marine.hourly.find((point) => point.weatherCode !== null)?.weatherCode ?? null;
   const evaluationText = loading ? '---' : decision.title;
   const reasonsText = loading
     ? '---'
@@ -49,6 +51,7 @@ export function StatusCard({
   const [locationQuery, setLocationQuery] = useState(marine.location.name);
   const [isLocationOpen, setIsLocationOpen] = useState(false);
   const [locationQueryDirty, setLocationQueryDirty] = useState(false);
+  const locationInputRef = useRef<HTMLInputElement | null>(null);
   const trimmedQuery = locationQuery.trim();
   const showSuggestions = isLocationOpen && locationQueryDirty && trimmedQuery.length >= 2;
   const visibleOptions = showSuggestions ? locationOptions : [];
@@ -70,9 +73,43 @@ export function StatusCard({
     return () => window.clearTimeout(timeoutId);
   }, [onSearchLocation, showSuggestions, trimmedQuery]);
 
+  useEffect(() => {
+    if (!isLocationOpen) return;
+    const id = window.requestAnimationFrame(() => {
+      locationInputRef.current?.focus();
+      locationInputRef.current?.select();
+    });
+    return () => window.cancelAnimationFrame(id);
+  }, [isLocationOpen]);
+
+  useEffect(() => {
+    if (loading) return;
+    const label = getStationLabel(marine.sourceLabel);
+    if (!label) return;
+    // Debug visibility without occupying UI space.
+    console.info('[Paddle Check] Station:', label);
+  }, [loading, marine.sourceLabel]);
+
   return (
     <section className={`status-card ${loading ? 'status-card--updating' : ''}`}>
       <div className="status-hero">
+        {recentLocations.length > 0 && (
+          <div className="location-recents" aria-label="Recent locations">
+            {recentLocations.slice(0, 3).map((option) => (
+              <button
+                key={`recent-${option.id}`}
+                type="button"
+                className="location-recent-pill"
+                onClick={() => {
+                  onPickLocation(option);
+                  setIsLocationOpen(false);
+                }}
+              >
+                {option.name}
+              </button>
+            ))}
+          </div>
+        )}
         <div className="location-chip-row">
           <button
             type="button"
@@ -104,6 +141,7 @@ export function StatusCard({
           <div className="location-popover" role="dialog" aria-label="Location search">
             <div className="location-popover__search-row">
               <input
+                ref={locationInputRef}
                 className="location-popover__input"
                 value={locationQuery}
                 onChange={(event) => {
@@ -139,13 +177,19 @@ export function StatusCard({
         )}
         <div className="status-hero__metrics">
           <span className="temp-chip">
-            <AirTempIcon />
+            <AirTempIcon weatherCode={currentWeatherCode} />
             <span>{marine.airTempC ?? '--'}°C</span>
           </span>
-          <span className="temp-chip">
-            <WaterTempIcon />
-            <span>{marine.waterTempC ?? '--'}°C</span>
+          <span className="temp-chip wind-chip">
+            <WindIcon />
+            <span>{`${windSpeedLabel}kn ${windDirectionLabel}`}</span>
           </span>
+          {marine.waterTempC !== null && (
+            <span className="temp-chip">
+              <WaterTempIcon />
+              <span>{marine.waterTempC}°C</span>
+            </span>
+          )}
         </div>
 
         <div
@@ -170,16 +214,9 @@ export function StatusCard({
             )}
           </div>
         </div>
-        <span className="temp-chip wind-chip">
-          <WindIcon />
-          <span>{`${windSpeedKnots}kn ${windDirectionLabel}`}</span>
-        </span>
         <div className="status-card__evaluation">
           <p>{evaluationText}</p>
           <small>{reasonsText}</small>
-        </div>
-        <div className="status-card__source" aria-label="Data sources">
-          <div>Station: {stationLabel}</div>
         </div>
       </div>
 
@@ -216,7 +253,24 @@ function cardinalToDegrees(cardinal: string): number {
   return lookup[cardinal.toUpperCase()] ?? 0;
 }
 
-function AirTempIcon() {
+function AirTempIcon({ weatherCode }: { weatherCode: number | null }) {
+  if (weatherCode !== null && weatherCode >= 60) {
+    return (
+      <svg className="temp-icon temp-icon--air" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M7 7a4.2 4.2 0 0 1 7.8-1.7A3.3 3.3 0 1 1 16.5 12H7.2A2.8 2.8 0 1 1 7 7Z" fill="none" stroke="currentColor" strokeWidth="2" />
+        <path d="M9 14.5 8 16M13 14.5 12 16M17 14.5 16 16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      </svg>
+    );
+  }
+
+  if (weatherCode !== null && weatherCode >= 3) {
+    return (
+      <svg className="temp-icon temp-icon--air" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M7 7a4.2 4.2 0 0 1 7.8-1.7A3.3 3.3 0 1 1 16.5 12H7.2A2.8 2.8 0 1 1 7 7Z" fill="none" stroke="currentColor" strokeWidth="2" />
+      </svg>
+    );
+  }
+
   return (
     <svg className="temp-icon temp-icon--air" viewBox="0 0 24 24" aria-hidden="true">
       <circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" strokeWidth="2" />
@@ -279,10 +333,10 @@ function TargetIcon() {
   );
 }
 
-function toKnots(speedKmh: number | null): string {
-  if (speedKmh === null) {
+function formatWindSpeed(speed: number | null): string {
+  if (speed === null) {
     return '--';
   }
 
-  return Math.round(speedKmh * 0.539957).toString();
+  return Math.round(speed).toString();
 }

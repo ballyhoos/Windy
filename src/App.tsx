@@ -13,31 +13,35 @@ import type {
 
 const STORAGE_KEYS = {
   location: 'paddle-check:last-location',
+  recentLocations: 'paddle-check:recent-locations',
 };
 
-const DEFAULT_LOCATION: LocationOption = {
-  id: 'st-kilda',
-  name: 'St Kilda Beach',
-  latitude: -37.8676,
-  longitude: 144.9747,
-  region: 'VIC',
-};
-const INITIAL_LOCATION = loadStoredLocation() ?? DEFAULT_LOCATION;
+const INITIAL_LOCATION = loadStoredLocation();
 
 export default function App() {
   const [location, setLocation] = useState<LocationOption | null>(INITIAL_LOCATION);
+  const [recentLocations, setRecentLocations] = useState<LocationOption[]>(loadRecentLocations());
   const [searchResults, setSearchResults] = useState<LocationOption[]>([]);
   const [conditions, setConditions] = useState<PaddleConditions | null>(
-    createPlaceholderConditions(INITIAL_LOCATION),
+    INITIAL_LOCATION ? createPlaceholderConditions(INITIAL_LOCATION) : null,
   );
   const [loading, setLoading] = useState(true);
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const searchRequestIdRef = useRef(0);
   const conditionsRequestIdRef = useRef(0);
+  const inFlightLocationKeyRef = useRef<string | null>(null);
+  const lastLoadedLocationKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
-    const activeLocation = location ?? DEFAULT_LOCATION;
+    if (!location) {
+      return;
+    }
+    const activeLocation = location;
+    const key = buildLocationKey(activeLocation);
+    if (lastLoadedLocationKeyRef.current === key || inFlightLocationKeyRef.current === key) {
+      return;
+    }
     void loadConditions(activeLocation);
   }, [location]);
 
@@ -76,6 +80,11 @@ export default function App() {
   }, []);
 
   async function loadConditions(nextLocation: LocationOption) {
+    const locationKey = buildLocationKey(nextLocation);
+    if (inFlightLocationKeyRef.current === locationKey || lastLoadedLocationKeyRef.current === locationKey) {
+      return;
+    }
+    inFlightLocationKeyRef.current = locationKey;
     const requestId = ++conditionsRequestIdRef.current;
     setLoading(true);
     setError(null);
@@ -93,7 +102,7 @@ export default function App() {
 
     try {
       const [marine, tide, sun] = await Promise.all([
-        fetchMarineWeather(nextLocation, { mockMode: false }),
+        fetchMarineWeather(nextLocation),
         fetchTideData(nextLocation, { mockMode: false }),
         fetchSunData(nextLocation, { mockMode: false }),
       ]);
@@ -112,12 +121,21 @@ export default function App() {
 
       setConditions(nextConditions);
       window.localStorage.setItem(STORAGE_KEYS.location, JSON.stringify(nextLocation));
+      setRecentLocations((current) => {
+        const next = upsertRecentLocations(current, nextLocation, 4);
+        window.localStorage.setItem(STORAGE_KEYS.recentLocations, JSON.stringify(next));
+        return next;
+      });
+      lastLoadedLocationKeyRef.current = locationKey;
     } catch (caught) {
       if (requestId !== conditionsRequestIdRef.current) {
         return;
       }
       setError(caught instanceof Error ? caught.message : 'Unable to load conditions.');
     } finally {
+      if (inFlightLocationKeyRef.current === locationKey) {
+        inFlightLocationKeyRef.current = null;
+      }
       if (requestId === conditionsRequestIdRef.current) {
         setLoading(false);
       }
@@ -196,22 +214,58 @@ export default function App() {
                 setLocation(nextLocation);
                 setSearchResults([]);
               }}
+              recentLocations={recentLocations.filter((item) => item.id !== conditions.marine.location.id)}
               locationOptions={searchResults}
               searchingLocations={searching}
             />
           </>
         )}
+
+        <footer className="app-footer">
+          Sun data by{' '}
+          <a href="https://sunrise-sunset.org/api" target="_blank" rel="noreferrer">
+            Sunrise-Sunset API
+          </a>
+        </footer>
       </div>
     </main>
   );
 }
 
+function loadRecentLocations(): LocationOption[] {
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEYS.recentLocations);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as LocationOption[];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (item) =>
+        !!item &&
+        typeof item.id === 'string' &&
+        typeof item.name === 'string' &&
+        typeof item.latitude === 'number' &&
+        typeof item.longitude === 'number',
+    );
+  } catch {
+    return [];
+  }
+}
+
+function upsertRecentLocations(
+  current: LocationOption[],
+  nextLocation: LocationOption,
+  max: number,
+): LocationOption[] {
+  const deduped = current.filter((item) => item.id !== nextLocation.id);
+  return [nextLocation, ...deduped].slice(0, max);
+}
+
 function loadStoredLocation(): LocationOption | null {
   try {
     const raw = window.localStorage.getItem(STORAGE_KEYS.location);
-    return raw ? (JSON.parse(raw) as LocationOption) : DEFAULT_LOCATION;
+    return raw ? (JSON.parse(raw) as LocationOption) : null;
   } catch {
-    return DEFAULT_LOCATION;
+    return null;
   }
 }
 
@@ -238,13 +292,14 @@ function createPlaceholderConditions(location: LocationOption): PaddleConditions
     marine: {
       location,
       wind: {
-        speedKmh: null,
-        gustKmh: null,
+        speed: null,
+        gust: null,
         directionDegrees: 0,
         cardinal: 'N',
         shoreRelation: 'variable',
       },
       airTempC: null,
+      feelsLikeTempC: null,
       waterTempC: null,
       swellHeightM: null,
       visibilityKm: null,
@@ -270,6 +325,7 @@ function createPlaceholderConditions(location: LocationOption): PaddleConditions
     sun: {
       sunrise: sunrise.toISOString(),
       sunset: sunset.toISOString(),
+      moonPhase: 'unknown',
       daylightRemainingMinutes: null,
       safeReturnBufferMinutes: 90,
       sourceLabel: 'Loading',
@@ -277,4 +333,8 @@ function createPlaceholderConditions(location: LocationOption): PaddleConditions
     updatedAt: now.toISOString(),
     isMock: true,
   };
+}
+
+function buildLocationKey(location: LocationOption): string {
+  return `${location.id}|${location.region ?? ''}|${location.latitude.toFixed(4)}|${location.longitude.toFixed(4)}`;
 }
