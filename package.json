@@ -6,9 +6,10 @@
   "scripts": {
     "dev": "vite",
     "build:app": "node scripts/generate-build-version.mjs && tsc -b && vite build",
+    "build:app:pages": "node scripts/generate-build-version.mjs && tsc -b && vite build --mode gh-pages",
     "build": "npm run build:app",
     "build:single-html": "node scripts/build-single-html.mjs",
-    "build:docs": "npm run build:app && npm run build:single-html",
+    "build:docs": "npm run build:app:pages && npm run build:single-html",
     "preview": "vite preview"
   },
   "dependencies": {
