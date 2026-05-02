@@ -5,8 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "prebuild": "node scripts/generate-build-version.mjs",
     "build": "tsc -b && vite build",
-    "build:pages": "tsc -b && vite build --mode gh-pages --outDir docs",
+    "build:pages": "node scripts/generate-build-version.mjs && tsc -b && vite build --mode gh-pages --outDir docs",
     "preview": "vite preview"
   },
   "dependencies": {

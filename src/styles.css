@@ -220,6 +220,16 @@ button {
   line-height: 1.35;
 }
 
+.status-card__disclaimer {
+  margin: 12px 2px 2px;
+  color: rgba(31, 50, 68, 0.48);
+  font-size: 0.64rem;
+  line-height: 1.28;
+  text-align: center;
+  position: relative;
+  z-index: 4;
+}
+
 .temp-chip {
   display: inline-flex;
   align-items: center;

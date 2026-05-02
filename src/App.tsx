@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { StatusCard } from './components/StatusCard';
+import { BUILD_VERSION } from './generated/buildInfo';
 import { evaluatePaddleConditions } from './lib/decisionEngine';
 import { buildHourlyOutlook } from './lib/hourlyOutlook';
 import { fetchSunData } from './lib/sunApi';
@@ -239,6 +240,10 @@ export default function App() {
           <a href="https://sunrise-sunset.org/api" target="_blank" rel="noreferrer" className="app-footer__sun-link">
             Sunrise-Sunset API
           </a>
+          <span className="app-footer__sep" aria-hidden="true">
+            |
+          </span>
+          <span className="app-footer__version">Version: {BUILD_VERSION}</span>
           <span className="app-footer__sep" aria-hidden="true">
             |
           </span>

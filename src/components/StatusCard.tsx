@@ -276,6 +276,9 @@ export function StatusCard({
           </div>
         )}
       </div>
+      <p className="status-card__disclaimer">
+        Conditions change quickly. Guidance only — check warnings and use your judgement.
+      </p>
     </section>
   );
 }

@@ -1,0 +1,2 @@
+export const BUILD_VERSION = "260502-1328";
+export const BUILD_GENERATED_AT = "2026-05-02T03:28:32.974Z";
