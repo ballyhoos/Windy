@@ -5,10 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build:app": "tsc -b && vite build",
+    "build:app": "node scripts/generate-build-version.mjs && tsc -b && vite build",
     "build": "npm run build:app",
     "build:single-html": "node scripts/build-single-html.mjs",
-    "build:docs": "node scripts/generate-build-version.mjs && npm run build:app && npm run build:single-html",
+    "build:docs": "npm run build:app && npm run build:single-html",
     "preview": "vite preview"
   },
   "dependencies": {
