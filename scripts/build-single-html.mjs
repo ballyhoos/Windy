@@ -5,6 +5,8 @@ const distHtmlPath = resolve('dist/index.html');
 const docsHtmlPath = resolve('docs/index.html');
 const distAssetsPath = resolve('dist/assets');
 const docsAssetsPath = resolve('docs/assets');
+const publicDataPath = resolve('public/data');
+const docsDataPath = resolve('docs/data');
 const buildInfoPath = resolve('public/build-info.json');
 
 const html = readFileSync(distHtmlPath, 'utf8');
@@ -18,6 +20,13 @@ if (existsSync(docsAssetsPath)) {
   rmSync(docsAssetsPath, { recursive: true, force: true });
 }
 cpSync(distAssetsPath, docsAssetsPath, { recursive: true });
+
+if (existsSync(docsDataPath)) {
+  rmSync(docsDataPath, { recursive: true, force: true });
+}
+if (existsSync(publicDataPath)) {
+  cpSync(publicDataPath, docsDataPath, { recursive: true });
+}
 
 let transformed = html;
 const versionMeta = `<meta name="windy-build-version" content="${version}" />`;
@@ -39,4 +48,4 @@ transformed = transformed.replace(
 mkdirSync(dirname(docsHtmlPath), { recursive: true });
 writeFileSync(docsHtmlPath, transformed, 'utf8');
 
-console.log(`[build-single-html] Wrote docs/index.html and docs/assets (v=${version})`);
+console.log(`[build-single-html] Wrote docs/index.html, docs/assets, docs/data (v=${version})`);
