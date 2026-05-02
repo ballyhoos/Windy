@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { HourlyOutlook } from './HourlyOutlook';
+import { ShorelineOrientationCircle } from './ShorelineOrientationCircle';
 import forecastSubscribeBg from '../assets/forecast-subscribe-bg.png';
 import type { HourlyOutlookItem } from '../lib/hourlyOutlook';
 import type { DecisionResult, LocationOption, MarineConditionSet } from '../types/conditions';
@@ -225,26 +226,29 @@ export function StatusCard({
           )}
         </div>
 
-        <div
-          className="status-hero__signal"
-          style={
-            {
-              '--signal-color': meta.color,
-            } as CSSProperties
-          }
-        >
+        <div className="status-hero__signal-wrap">
+          <ShorelineOrientationCircle lat={marine.location.latitude} lon={marine.location.longitude} />
           <div
-            className={`status-hero__arrow ${isCalm ? 'status-hero__arrow--calm' : ''}`}
-            style={{ transform: `translate(-50%, -50%) rotate(${direction}deg)` }}
-            aria-label={`Wind direction ${marine.wind.cardinal}`}
+            className="status-hero__signal"
+            style={
+              {
+                '--signal-color': meta.color,
+              } as CSSProperties
+            }
           >
-            {isCalm ? (
-              '●'
-            ) : (
-              <svg className="status-hero__triangle" viewBox="0 0 140 140" aria-hidden="true">
-                <polygon points="70,8 118,126 70,104 22,126" />
-              </svg>
-            )}
+            <div
+              className={`status-hero__arrow ${isCalm ? 'status-hero__arrow--calm' : ''}`}
+              style={{ transform: `translate(-50%, -50%) rotate(${direction}deg)` }}
+              aria-label={`Wind direction ${marine.wind.cardinal}`}
+            >
+              {isCalm ? (
+                '●'
+              ) : (
+                <svg className="status-hero__triangle" viewBox="0 0 140 140" aria-hidden="true">
+                  <polygon points="70,8 118,126 70,104 22,126" />
+                </svg>
+              )}
+            </div>
           </div>
         </div>
         <div className="status-card__evaluation">

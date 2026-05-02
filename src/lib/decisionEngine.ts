@@ -60,6 +60,16 @@ export function evaluatePaddleConditions(
     pushReason(amberReasons, triggeredFlags, 'amber', 'Gusty conditions', 'gusts-caution');
   }
 
+  if (marine.wind.shoreRelation === 'offshore') {
+    if ((marine.wind.speed ?? 0) >= thresholds.cautionWind) {
+      pushReason(redReasons, triggeredFlags, 'red', 'Offshore wind risk', 'offshore-wind');
+    } else {
+      pushReason(amberReasons, triggeredFlags, 'amber', 'Offshore wind', 'offshore-wind');
+    }
+  } else if (marine.wind.shoreRelation === 'cross-shore') {
+    pushReason(amberReasons, triggeredFlags, 'amber', 'Cross-shore wind', 'cross-shore-wind');
+  }
+
   if (marine.roughWater || (marine.swellHeightM ?? 0) >= thresholds.highSwellM) {
     pushReason(redReasons, triggeredFlags, 'red', 'High swell or rough water', 'swell');
   } else if ((marine.swellHeightM ?? 0) >= thresholds.cautionSwellM) {

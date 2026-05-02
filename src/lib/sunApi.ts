@@ -13,6 +13,7 @@ export async function fetchSunData(
     lng: String(location.longitude),
     formatted: '0',
     date: 'today',
+    tzid: inferTimezoneFromLocation(location),
   });
   const endpoint = `https://api.sunrise-sunset.org/json?${params.toString()}`;
 
@@ -34,10 +35,18 @@ export async function fetchSunData(
     }
 
     const now = new Date();
-    const daylightRemainingMinutes = Math.max(
+    let daylightRemainingMinutes = Math.max(
       0,
       Math.round((sunset.getTime() - now.getTime()) / 60000),
     );
+    // Guard against provider day-boundary mismatches: if we're clearly between
+    // sunrise and sunset but computed remaining time is zero/negative, recompute.
+    if (now >= sunrise && now <= sunset && daylightRemainingMinutes === 0) {
+      daylightRemainingMinutes = Math.max(
+        1,
+        Math.round((sunset.getTime() - now.getTime()) / 60000),
+      );
+    }
 
     return {
       sunrise: sunrise.toISOString(),
@@ -111,4 +120,17 @@ function deriveMoonPhase(date: Date): SunCondition['moonPhase'] {
   if (ratio < 0.28 || ratio >= 0.72) return 'quarter';
   if (ratio < 0.47 || ratio >= 0.53) return 'gibbous';
   return 'full';
+}
+
+function inferTimezoneFromLocation(location: LocationOption): string {
+  const region = (location.region ?? '').trim().toLowerCase();
+  if (region.includes('queensland')) return 'Australia/Brisbane';
+  if (region.includes('new south wales')) return 'Australia/Sydney';
+  if (region.includes('victoria')) return 'Australia/Melbourne';
+  if (region.includes('tasmania')) return 'Australia/Hobart';
+  if (region.includes('south australia')) return 'Australia/Adelaide';
+  if (region.includes('western australia')) return 'Australia/Perth';
+  if (region.includes('northern territory')) return 'Australia/Darwin';
+  if (region.includes('australian capital territory')) return 'Australia/Sydney';
+  return 'Australia/Melbourne';
 }

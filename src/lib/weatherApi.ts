@@ -2,8 +2,10 @@ import type {
   LocationOption,
   MarineHourlyPoint,
   MarineConditionSet,
+  ShoreRelation,
   WarningInfo,
 } from '../types/conditions';
+import { getShorelineForLocation } from './shorelineGrid';
 
 type BomObservedWind = {
   speed: number | null;
@@ -318,7 +320,7 @@ export async function fetchMarineWeather(
   const gust = bomObservedWind?.gust ?? forecastGust;
   const directionDegrees = bomObservedWind?.directionDegrees ?? forecastDirectionDegrees;
   const cardinal = bomObservedWind?.cardinal ?? degreesToCardinal(directionDegrees ?? 0);
-  const shoreRelation = 'variable';
+  const shoreRelation = await resolveShoreRelation(location, directionDegrees);
   const warnings: WarningInfo[] = [];
   const hourly = buildLiveHourlyPoints(bomForecastWeatherPayload, bomObservedWind, nowIndex);
 
@@ -355,6 +357,43 @@ export async function fetchMarineWeather(
       : 'BOM forecast unavailable',
     hourly,
   };
+}
+
+async function resolveShoreRelation(
+  location: LocationOption,
+  windFromDirectionDegrees: number | null,
+): Promise<ShoreRelation> {
+  if (windFromDirectionDegrees === null) {
+    return 'variable';
+  }
+
+  const shoreline = await getShorelineForLocation(location.latitude, location.longitude);
+  if (!shoreline.available || typeof shoreline.seaBearingDeg !== 'number') {
+    return 'variable';
+  }
+
+  // Use the same convention as the UI icon: wind vector points "to".
+  // Onshore means wind travels toward land (away from sea bearing).
+  const windToDirection = normalizeDegrees(windFromDirectionDegrees + 180);
+  const diffToSea = smallestAngleDelta(windToDirection, shoreline.seaBearingDeg);
+  if (diffToSea >= 145) {
+    return 'onshore';
+  }
+  if (diffToSea <= 35) {
+    return 'offshore';
+  }
+  return 'cross-shore';
+}
+
+function smallestAngleDelta(a: number, b: number): number {
+  const normalizedA = ((a % 360) + 360) % 360;
+  const normalizedB = ((b % 360) + 360) % 360;
+  const raw = Math.abs(normalizedA - normalizedB);
+  return Math.min(raw, 360 - raw);
+}
+
+function normalizeDegrees(value: number): number {
+  return ((value % 360) + 360) % 360;
 }
 
 type BomWeatherPayload = {
