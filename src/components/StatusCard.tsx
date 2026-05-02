@@ -120,7 +120,7 @@ export function StatusCard({
     const label = getStationLabel(marine.sourceLabel);
     if (!label) return;
     // Debug visibility without occupying UI space.
-    console.info(`[Paddle Check] Location: ${marine.location.name} | Station: ${label}`);
+    console.info(`[Windy] Location: ${marine.location.name} | Station: ${label}`);
   }, [loading, marine.location.name, marine.sourceLabel]);
 
   return (
