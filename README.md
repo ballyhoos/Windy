@@ -1,15 +1,32 @@
-# windy
-Paddle Check (BOM-first paddle conditions app)
+# Windy
+Windy (BOM-first paddle conditions app)
 
 ## GitHub Pages
 
-Build the static GitHub Pages site into `docs/`:
+Build standard app output:
 
 ```sh
-npm run build:pages
+npm run build
 ```
 
-In GitHub, set Pages to publish from the `main` branch and `/docs` folder. The app will be available at:
+Build GitHub Pages publish artifact:
+
+```sh
+npm run build:docs
+```
+
+This generates:
+
+- `dist/` (standard Vite output, external hashed assets)
+- `docs/index.html` (Pages entry)
+- `docs/assets/*` (copied from `dist/assets`)
+
+Cache busting for docs build:
+
+- `docs/index.html` includes `?v=YYMMDD-HHMM` on CSS/JS asset URLs
+- `docs/index.html` includes `<meta name="windy-build-version" ...>`
+
+In GitHub, set Pages to publish from the `main` branch and `/docs` folder. The app is available at:
 
 ```text
 https://ballyhoos.github.io/Windy/
@@ -62,7 +79,7 @@ VITE_WEATHER_PROXY_BASE_URL=https://windy-bom-proxy.695.workers.dev
 ### Notes
 
 - Tide graph renders only when real tide events are returned. No synthetic tide fallback is shown.
-- Station text is hidden in UI; resolved station is logged in browser console (`[Paddle Check] Station: ...`).
+- Station text is hidden in UI; resolved station is logged in browser console (`[Windy] Location: ... | Station: ...`).
 
 ## Cloudflare Worker Deploy
 

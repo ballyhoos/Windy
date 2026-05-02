@@ -126,3 +126,14 @@ Then tune based on generated file size and coastal UX needs.
 - Source datasets remain in `/source-data/`.
 - Runtime app must not perform geospatial processing.
 - No API/service/backend required for this workflow.
+
+## 9) Build outputs and Pages pipeline
+
+- App build: `npm run build` -> standard Vite output in `dist/`.
+- Pages build: `npm run build:docs`.
+- `build:docs` flow:
+  1. generate build version (`YYMMDD-HHMM`)
+  2. build app into `dist/`
+  3. write `docs/index.html` and copy `docs/assets/*`
+- `dist/index.html` is never modified by docs generation.
+- `docs/index.html` references `/Windy/assets/*` with `?v=<build-version>` for cache busting.

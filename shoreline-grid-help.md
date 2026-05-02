@@ -110,6 +110,22 @@ Optional (with land polygons):
 
 ---
 
+## 🧱 Frontend build and Pages publish files
+
+Windy uses two frontend outputs:
+
+- `npm run build` -> standard app build in `/dist`
+- `npm run build:docs` -> GitHub Pages artifact in `/docs`
+
+`build:docs` produces:
+
+- `/docs/index.html`
+- `/docs/assets/*`
+
+And adds cache busting to docs HTML by appending `?v=YYMMDD-HHMM` to CSS/JS asset URLs.
+
+---
+
 ## 🔧 What the script does
 
 The generator performs the following steps:
