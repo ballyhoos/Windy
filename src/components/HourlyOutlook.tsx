@@ -247,11 +247,11 @@ export function HourlyOutlook({ items, embedded = false }: HourlyOutlookProps) {
             key={`tide-extreme-${extreme.key}`}
             className={`hourly-tide-extreme hourly-tide-extreme--${extreme.type}`}
           >
-            <circle className="hourly-tide-extreme-dot" cx={extreme.x} cy={extreme.y} r={3.2} />
+            <circle className="hourly-tide-extreme-dot" cx={extreme.x} cy={extreme.y} r={4.6} />
             <circle
               cx={extreme.x}
               cy={extreme.y}
-              r={11}
+              r={16}
               className="hourly-tide-extreme-hitbox"
               onMouseEnter={() => setHoverTideMarkerKey(extreme.key)}
               onMouseLeave={() => setHoverTideMarkerKey(null)}
@@ -272,7 +272,7 @@ export function HourlyOutlook({ items, embedded = false }: HourlyOutlookProps) {
               key={point.timestamp}
               cx={point.x}
               cy={point.y ?? GRAPH.top + yRange}
-              r={4}
+              r={5.2}
               className={`hourly-point ${point.isInterpolatedWind ? 'hourly-point--interpolated' : `hourly-point--${point.status}`}`}
               onMouseEnter={() => setActiveTimestamp(point.timestamp)}
               onMouseLeave={() => setActiveTimestamp(null)}
@@ -295,7 +295,8 @@ export function HourlyOutlook({ items, embedded = false }: HourlyOutlookProps) {
               onBlur={() => setActiveTimestamp(null)}
               tabIndex={0}
             >
-              <polygon points="0,-8 5,6 -5,6" className="hourly-point-marker" />
+              <circle cx={0} cy={0} r={15} className="hourly-point-hitbox" />
+              <polygon points="0,-8 5.2,6 -5.2,6" className="hourly-point-marker" />
               <title>{`${formatHour(point.timestamp)}: ${point.windKnots} kn ${Math.round(
                 point.windDirectionDegrees,
               )}° (${point.status})`}</title>
