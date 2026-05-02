@@ -57,7 +57,7 @@ export async function loadRegionalShorelineGrid(region: ShorelineRegion): Promis
   const pending = shorelineGridPromiseCache[region];
   if (pending) return pending;
 
-  const request = fetch(`/data/shoreline-grid-${region}.json`)
+  const request = fetch(`${import.meta.env.BASE_URL}data/shoreline-grid-${region}.json`)
     .then(async (response) => {
       if (!response.ok) return null;
       const data = (await response.json()) as ShorelineGridData;
