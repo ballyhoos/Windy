@@ -100,22 +100,26 @@ export async function searchLocations(query: string): Promise<LocationOption[]> 
   }
 
   try {
-    // Primary geocoding for reliable suburb coordinates.
+    // Unified geocoding pipeline: gather POI + locality candidates together.
     const variants = buildQueryVariants(trimmed);
-    const aggregate: LocationOption[] = [];
+    const aggregate: RankedLocationOption[] = [];
     for (const variant of variants) {
-      const nominatimResults = dedupeLocationOptions(await fetchNominatimGeocode(variant));
+      const nominatimResults = await fetchNominatimGeocode(variant, trimmed);
       aggregate.push(...nominatimResults);
-      if (aggregate.length >= 8) {
+      if (aggregate.length >= 20) {
         break;
       }
     }
-    const deduped = dedupeLocationOptions(aggregate).slice(0, 8);
-    if (deduped.length > 0) {
-      return deduped;
+
+    const deduped = dedupeRankedLocationOptions(aggregate);
+    if (deduped.length === 0) {
+      return [];
     }
 
-    return [];
+    return deduped
+      .sort((a, b) => b.rank - a.rank)
+      .slice(0, 8)
+      .map((item) => item.location);
   } catch {
     return [];
   }
@@ -142,20 +146,43 @@ export async function resolveNearestLocation(
   return baseLocation;
 }
 
-function dedupeLocationOptions(options: LocationOption[]): LocationOption[] {
-  const seen = new Set<string>();
-  const output: LocationOption[] = [];
+type RankedLocationOption = {
+  location: LocationOption;
+  rank: number;
+};
 
-  for (const option of options) {
-    const key = `${option.name}|${option.region ?? ''}`.trim().toLowerCase();
-    if (seen.has(key)) {
+function dedupeRankedLocationOptions(options: RankedLocationOption[]): RankedLocationOption[] {
+  const output: RankedLocationOption[] = [];
+
+  for (const candidate of options) {
+    const duplicateIndex = output.findIndex((existing) =>
+      isDuplicateLocationCandidate(existing.location, candidate.location),
+    );
+    if (duplicateIndex === -1) {
+      output.push(candidate);
       continue;
     }
-    seen.add(key);
-    output.push(option);
+    if (candidate.rank > output[duplicateIndex].rank) {
+      output[duplicateIndex] = candidate;
+    }
   }
 
   return output;
+}
+
+function isDuplicateLocationCandidate(a: LocationOption, b: LocationOption): boolean {
+  const sameName = normalizeLocationLabelForDedupe(a.name) === normalizeLocationLabelForDedupe(b.name);
+  const sameRegion =
+    normalizeLocationLabelForDedupe(a.region ?? '') === normalizeLocationLabelForDedupe(b.region ?? '');
+  if (sameName && sameRegion) {
+    return true;
+  }
+  const distanceKm = haversineKm(a.latitude, a.longitude, b.latitude, b.longitude);
+  return sameName && distanceKm < 0.35;
+}
+
+function normalizeLocationLabelForDedupe(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
 type NominatimResult = {
@@ -168,8 +195,13 @@ type NominatimResult = {
   type?: string;
   address?: {
     suburb?: string;
+    neighbourhood?: string;
+    hamlet?: string;
+    quarter?: string;
     town?: string;
     city?: string;
+    city_district?: string;
+    municipality?: string;
     village?: string;
     state?: string;
     country?: string;
@@ -177,12 +209,12 @@ type NominatimResult = {
   };
 };
 
-async function fetchNominatimGeocode(query: string): Promise<LocationOption[]> {
+async function fetchNominatimGeocode(query: string, userInput: string): Promise<RankedLocationOption[]> {
   const url = new URL('https://nominatim.openstreetmap.org/search');
   url.searchParams.set('q', query);
   url.searchParams.set('format', 'jsonv2');
   url.searchParams.set('addressdetails', '1');
-  url.searchParams.set('limit', '8');
+  url.searchParams.set('limit', '20');
   url.searchParams.set('countrycodes', 'au');
   // Keep fallback geocoding focused on Australia bounds for suburb-level relevance.
   url.searchParams.set('viewbox', '112.9,-10.0,154.0,-44.0');
@@ -200,27 +232,155 @@ async function fetchNominatimGeocode(query: string): Promise<LocationOption[]> {
       const code = (result.address?.country_code ?? '').toLowerCase();
       const country = (result.address?.country ?? '').toLowerCase();
       const display = (result.display_name ?? '').toLowerCase();
-      return code === 'au' || country === 'australia' || display.includes('australia');
+      if (!(code === 'au' || country === 'australia' || display.includes('australia'))) {
+        return false;
+      }
+      const query = normalizeSearchText(userInput);
+      const type = (result.type ?? '').toLowerCase();
+      const category = (result.category ?? '').toLowerCase();
+      const isAdministrative = type === 'administrative' || /\bcouncil\b/.test(display);
+      const wantsAdministrative = /\bcouncil|shire|municipality|lga\b/.test(query);
+      const isCouncilLike = /\bcouncil\b|\bshire\b|\bmunicipality\b|\blga\b/.test(display);
+      if (isAdministrative && isCouncilLike && !wantsAdministrative) {
+        return false;
+      }
+      return true;
     })
     .map((result) => {
-      const locality =
-        result.address?.suburb ??
-        result.address?.town ??
-        result.address?.city ??
-        result.address?.village ??
-        result.name ??
-        result.display_name.split(',')[0] ??
-        'Unknown';
+      const locality = extractLocality(result);
+      const displayParts = (result.display_name ?? '')
+        .split(',')
+        .map((part) => part.trim())
+        .filter(Boolean);
+      const rawName = (result.name ?? '').trim();
+      const fallbackName = result.display_name.split(',')[0]?.trim() ?? 'Unknown';
+      const category = (result.category ?? '').toLowerCase();
+      const type = (result.type ?? '').toLowerCase();
+      const display = (result.display_name ?? '').toLowerCase();
+      const isPoi =
+        category === 'natural' ||
+        category === 'leisure' ||
+        category === 'tourism' ||
+        category === 'boundary' ||
+        /\b(point|marine|sanctuary|reef|reserve|beach|bay|harbour|harbor|coast|foreshore)\b/.test(type) ||
+        /\b(point|marine|sanctuary|reef|reserve|beach|bay|harbour|harbor|coast|foreshore)\b/.test(display);
+      const baseName = isPoi ? rawName || fallbackName : locality ?? (rawName || fallbackName);
+      const localityRaw = locality ?? (displayParts.length >= 2 ? displayParts[1] : null);
+      const contextualLocality = isNumericLocalityToken(localityRaw) ? null : localityRaw;
+      if (isNumericLocalityToken(baseName)) {
+        return null;
+      }
+      const shouldAppendLocality =
+        Boolean(contextualLocality) &&
+        normalizeSearchText(contextualLocality ?? '') !== normalizeSearchText(baseName);
+      const suburbSuffix = shouldAppendLocality ? `, ${contextualLocality}` : '';
+      const name = `${baseName}${suburbSuffix}`;
       const region = result.address?.state;
-
-      return {
+      const location: LocationOption = {
         id: `osm-au-${result.place_id ?? `${result.lat}-${result.lon}`}`,
-        name: region ? `${locality}, ${region}` : locality,
+        name: region ? `${name}, ${region}` : name,
         latitude: Number(result.lat),
         longitude: Number(result.lon),
         region,
+        stationQuery:
+          (contextualLocality ?? locality) && region
+            ? `${contextualLocality ?? locality}, ${region}`
+            : (contextualLocality ?? locality) ?? region ?? name,
+        isPoi,
       };
-    });
+
+      return {
+        location,
+        rank: computeLocationRank({
+          userInput,
+          candidateName: name,
+          displayName: result.display_name ?? name,
+          isPoi,
+          hasLocality: Boolean(locality),
+        }),
+      } satisfies RankedLocationOption;
+    })
+    .filter((entry): entry is RankedLocationOption => entry !== null);
+}
+
+function computeLocationRank(input: {
+  userInput: string;
+  candidateName: string;
+  displayName: string;
+  isPoi: boolean;
+  hasLocality: boolean;
+}): number {
+  const query = normalizeSearchText(input.userInput);
+  const name = normalizeSearchText(input.candidateName);
+  const display = normalizeSearchText(input.displayName);
+  const nameTokens = name.split(' ').filter(Boolean);
+  const displayTokens = display.split(' ').filter(Boolean);
+
+  if (!query) return 0;
+
+  let score = 0;
+  if (name === query) score += 300;
+  else if (name.startsWith(query)) score += 220;
+  else if (nameTokens.some((token) => token.startsWith(query))) score += 160;
+  else if (display.startsWith(query)) score += 100;
+  else if (displayTokens.some((token) => token.startsWith(query))) score += 70;
+  else return -1;
+
+  if (input.hasLocality) score += 10;
+  if (input.isPoi) score += 5;
+
+  return score;
+}
+
+function normalizeSearchText(value: string): string {
+  return value.toLowerCase().replace(/,/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function extractLocality(result: NominatimResult): string | null {
+  const locality =
+    result.address?.suburb ??
+    result.address?.neighbourhood ??
+    result.address?.hamlet ??
+    result.address?.quarter ??
+    result.address?.town ??
+    result.address?.city ??
+    result.address?.village ??
+    result.address?.city_district ??
+    result.address?.municipality ??
+    null;
+  if (locality) {
+    return locality;
+  }
+
+  const displayParts = (result.display_name ?? '')
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const candidate = displayParts.length >= 2 ? displayParts[1] : null;
+  if (!candidate) return null;
+  // Ignore fallback parts that are postcodes/admin labels rather than usable localities.
+  if (/^\d{3,6}$/.test(candidate)) return null;
+  if (/\bcouncil\b/i.test(candidate)) return null;
+  return candidate;
+}
+
+function isNumericLocalityToken(value: string | null | undefined): boolean {
+  if (!value) return false;
+  return /^\d{3,6}$/.test(value.trim());
+}
+
+function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const toRadians = (value: number): number => (value * Math.PI) / 180;
+  const earthRadiusKm = 6371;
+  const deltaLat = toRadians(lat2 - lat1);
+  const deltaLon = toRadians(lon2 - lon1);
+  const sinLat = Math.sin(deltaLat / 2);
+  const sinLon = Math.sin(deltaLon / 2);
+  const a =
+    sinLat * sinLat +
+    Math.cos(toRadians(lat1)) * Math.cos(toRadians(lat2)) * sinLon * sinLon;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return earthRadiusKm * c;
 }
 
 async function fetchNominatimReverse(
@@ -503,13 +663,15 @@ async function fetchBomObservedWind(location: LocationOption): Promise<BomObserv
       normalizeAustralianStateCode(location.region) ??
       inferAustralianStateFromCoordinates(location.latitude, location.longitude);
     if (!stateCode) return null;
+    const stationQuery = (location.stationQuery ?? location.name).trim();
     const stationResponse = await fetch(
-      `${base}/resolve-station?query=${encodeURIComponent(location.name)}&state=${encodeURIComponent(stateCode)}`,
+      `${base}/resolve-station?query=${encodeURIComponent(stationQuery)}&state=${encodeURIComponent(stateCode)}`,
     );
     if (!stationResponse.ok) return null;
     const stationPayload = (await stationResponse.json()) as {
       station?: { geohash?: string; id?: string; name?: string };
     };
+    if (!stationPayload.station) return null;
     const stationId = stationPayload.station?.geohash ?? stationPayload.station?.id;
     if (!stationId) return null;
     const observationResponse = await fetch(`${base}/observations?stationId=${encodeURIComponent(stationId)}`);

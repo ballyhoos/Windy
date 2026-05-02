@@ -63,6 +63,9 @@ export function StatusCard({
   const trimmedQuery = locationQuery.trim();
   const showSuggestions = isLocationOpen && locationQueryDirty && trimmedQuery.length >= 2;
   const visibleOptions = showSuggestions ? locationOptions : [];
+  const visibleRecentLocations = recentLocations
+    .filter((option, index, array) => array.findIndex((item) => item.id === option.id) === index)
+    .slice(0, 3);
 
   useEffect(() => {
     setLocationQuery('');
@@ -156,11 +159,11 @@ export function StatusCard({
         </div>
         {isLocationOpen && (
           <div ref={locationPopoverRef} className="location-popover" role="dialog" aria-label="Location search">
-            {recentLocations.length > 0 && (
+            {visibleRecentLocations.length > 0 && (
               <div className="location-recents location-recents--in-popover" aria-label="Recent locations">
-                {recentLocations.slice(0, 3).map((option) => (
+                {visibleRecentLocations.map((option, index) => (
                   <button
-                    key={`recent-${option.id}`}
+                    key={`recent-${option.id}-${index}`}
                     type="button"
                     className="location-recent-pill"
                     onClick={() => {

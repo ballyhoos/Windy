@@ -9,6 +9,8 @@ export interface LocationOption {
   latitude: number;
   longitude: number;
   region?: string;
+  stationQuery?: string;
+  isPoi?: boolean;
 }
 
 export interface WarningInfo {

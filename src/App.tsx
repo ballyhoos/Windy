@@ -286,13 +286,18 @@ function loadRecentLocations(): LocationOption[] {
     if (!raw) return [];
     const parsed = JSON.parse(raw) as LocationOption[];
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter(
+    const valid = parsed.filter(
       (item) =>
         !!item &&
         typeof item.id === 'string' &&
         typeof item.name === 'string' &&
         typeof item.latitude === 'number' &&
         typeof item.longitude === 'number',
+    );
+    return valid.filter(
+      (item, index, array) =>
+        array.findIndex((candidate) => normalizeRecentLocationKey(candidate) === normalizeRecentLocationKey(item)) ===
+        index,
     );
   } catch {
     return [];
@@ -305,7 +310,12 @@ function upsertRecentLocations(
   max: number,
 ): LocationOption[] {
   const nextKey = normalizeRecentLocationKey(nextLocation);
-  const deduped = current.filter((item) => normalizeRecentLocationKey(item) !== nextKey);
+  const deduped = current.filter(
+    (item) =>
+      normalizeRecentLocationKey(item) !== nextKey &&
+      item.id !== nextLocation.id &&
+      !isCoordinateNear(item, nextLocation, 0.15),
+  );
   return [nextLocation, ...deduped].slice(0, max);
 }
 
@@ -313,6 +323,10 @@ function normalizeRecentLocationKey(location: LocationOption): string {
   const name = location.name.trim().toLowerCase().replace(/\s+/g, ' ');
   const region = (location.region ?? '').trim().toLowerCase();
   return `${name}|${region}`;
+}
+
+function isCoordinateNear(a: LocationOption, b: LocationOption, thresholdKm: number): boolean {
+  return haversineKm(a.latitude, a.longitude, b.latitude, b.longitude) <= thresholdKm;
 }
 
 function loadStoredLocation(): LocationOption | null {
