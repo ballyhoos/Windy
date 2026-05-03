@@ -50,7 +50,15 @@ export function StatusCard({
   const windDirectionLabel = isCalm ? 'Calm' : marine.wind.cardinal;
   const airTempLabel = loading || marine.airTempC === null ? '--' : `${marine.airTempC}°C`;
   const windLabel = loading ? '--' : `${windSpeedLabel}kn ${windDirectionLabel}`;
-  const currentWeatherCode = marine.hourly.find((point) => point.weatherCode !== null)?.weatherCode ?? null;
+  const currentHourlyPoint = marine.hourly.find((point) => point.weatherCode !== null) ?? marine.hourly[0] ?? null;
+  const currentWeatherCode = currentHourlyPoint?.weatherCode ?? null;
+  const iconDescriptorNow = currentHourlyPoint?.iconDescriptor ?? null;
+  const isNightNow =
+    typeof currentHourlyPoint?.isNight === 'boolean'
+      ? currentHourlyPoint.isNight
+      : currentHourlyPoint
+      ? isNightTimestamp(currentHourlyPoint.timestamp)
+      : false;
   const evaluationText = loading ? '---' : decision.title;
   const reasonsText = loading
     ? '---'
@@ -223,7 +231,7 @@ export function StatusCard({
         )}
         <div className="status-hero__metrics">
           <span className="temp-chip">
-            <AirTempIcon weatherCode={currentWeatherCode} />
+            <AirTempIcon weatherCode={currentWeatherCode} iconDescriptor={iconDescriptorNow} isNight={isNightNow} />
             <span>{airTempLabel}</span>
           </span>
           <span className="temp-chip wind-chip">
@@ -325,12 +333,72 @@ function cardinalToDegrees(cardinal: string): number {
   return lookup[cardinal.toUpperCase()] ?? 0;
 }
 
-function AirTempIcon({ weatherCode }: { weatherCode: number | null }) {
+function AirTempIcon({
+  weatherCode,
+  iconDescriptor,
+  isNight,
+}: {
+  weatherCode: number | null;
+  iconDescriptor: string | null;
+  isNight: boolean;
+}) {
+  const descriptor = (iconDescriptor ?? '').toLowerCase();
+  if (isNight) {
+    return (
+      <svg className="temp-icon temp-icon--air" viewBox="0 0 24 24" aria-hidden="true">
+        <path
+          d="M14.8 3.4a8.6 8.6 0 1 0 5.8 13.8 7.7 7.7 0 1 1-5.8-13.8Z"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinejoin="round"
+        />
+      </svg>
+    );
+  }
+
+  if (descriptor.includes('shower') || descriptor.includes('rain') || descriptor.includes('storm')) {
+    return (
+      <svg className="temp-icon temp-icon--air" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M7 7a4.2 4.2 0 0 1 7.8-1.7A3.3 3.3 0 1 1 16.5 12H7.2A2.8 2.8 0 1 1 7 7Z" fill="none" stroke="currentColor" strokeWidth="2" />
+        <path d="M9 14.5 8 16M13 14.5 12 16M17 14.5 16 16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      </svg>
+    );
+  }
+
+  if (descriptor.includes('partly_cloudy') || descriptor.includes('mostly_sunny')) {
+    return (
+      <svg className="temp-icon temp-icon--air" viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="8" cy="9" r="3" fill="none" stroke="currentColor" strokeWidth="2" />
+        <path d="M8 3.5v1.8M8 12.7v1.8M2.6 9h1.8M11.6 9h1.8M4.1 5.1l1.3 1.3M10.6 11.6l1.3 1.3M11.9 5.1l-1.3 1.3M5.4 11.6l-1.3 1.3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+        <path d="M10.5 10.2a4 4 0 0 1 7.4-1.6A3.1 3.1 0 1 1 18.9 15H11a2.6 2.6 0 1 1-.5-4.8Z" fill="none" stroke="currentColor" strokeWidth="2" />
+      </svg>
+    );
+  }
+
+  if (descriptor.includes('cloud')) {
+    return (
+      <svg className="temp-icon temp-icon--air" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M7 7a4.2 4.2 0 0 1 7.8-1.7A3.3 3.3 0 1 1 16.5 12H7.2A2.8 2.8 0 1 1 7 7Z" fill="none" stroke="currentColor" strokeWidth="2" />
+      </svg>
+    );
+  }
+
   if (weatherCode !== null && weatherCode >= 60) {
     return (
       <svg className="temp-icon temp-icon--air" viewBox="0 0 24 24" aria-hidden="true">
         <path d="M7 7a4.2 4.2 0 0 1 7.8-1.7A3.3 3.3 0 1 1 16.5 12H7.2A2.8 2.8 0 1 1 7 7Z" fill="none" stroke="currentColor" strokeWidth="2" />
         <path d="M9 14.5 8 16M13 14.5 12 16M17 14.5 16 16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      </svg>
+    );
+  }
+
+  if (weatherCode === 2) {
+    return (
+      <svg className="temp-icon temp-icon--air" viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="8" cy="9" r="3" fill="none" stroke="currentColor" strokeWidth="2" />
+        <path d="M8 3.5v1.8M8 12.7v1.8M2.6 9h1.8M11.6 9h1.8M4.1 5.1l1.3 1.3M10.6 11.6l1.3 1.3M11.9 5.1l-1.3 1.3M5.4 11.6l-1.3 1.3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+        <path d="M10.5 10.2a4 4 0 0 1 7.4-1.6A3.1 3.1 0 1 1 18.9 15H11a2.6 2.6 0 1 1-.5-4.8Z" fill="none" stroke="currentColor" strokeWidth="2" />
       </svg>
     );
   }
@@ -411,4 +479,13 @@ function formatWindSpeed(speed: number | null): string {
   }
 
   return Math.round(speed).toString();
+}
+
+function isNightTimestamp(timestamp: string): boolean {
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) {
+    return false;
+  }
+  const hour = date.getHours();
+  return hour < 6 || hour >= 18;
 }

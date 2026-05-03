@@ -25,6 +25,8 @@ type BomForecastWindPoint = {
   cardinal: string;
   airTempC: number | null;
   weatherCode: number | null;
+  iconDescriptor: string | null;
+  isNight: boolean | null;
 };
 
 type BomLocationSearchPayload = {
@@ -42,6 +44,7 @@ type BomThreeHourlyForecastPayload = {
     time?: string;
     temp?: number | string | null;
     icon_descriptor?: string | null;
+    is_night?: boolean | null;
     wind?: {
       speed_kilometre?: number | string | null;
       speed_knot?: number | string | null;
@@ -566,6 +569,8 @@ type BomWeatherPayload = {
     is_wind_forecast_point?: boolean[];
     visibility?: Array<number | null>;
     weather_code?: Array<number | null>;
+    icon_descriptor?: Array<string | null>;
+    is_night?: Array<boolean | null>;
   };
 };
 
@@ -593,6 +598,8 @@ function buildLiveHourlyPoints(
       swellHeightM: null,
       visibilityKm: null,
       weatherCode: numberAt(bomForecastWeatherPayload?.hourly?.weather_code, index),
+      iconDescriptor: bomForecastWeatherPayload?.hourly?.icon_descriptor?.[index] ?? null,
+      isNight: bomForecastWeatherPayload?.hourly?.is_night?.[index] ?? null,
     };
   });
 
@@ -627,6 +634,8 @@ function buildBomForecastWeatherPayload(
   const isWindForecastPoint: boolean[] = [];
   const visibility: Array<number | null> = [];
   const weatherCode: Array<number | null> = [];
+  const iconDescriptor: Array<string | null> = [];
+  const isNight: Array<boolean | null> = [];
 
   for (let hour = 0; hour < 36; hour += 1) {
     const slot = addHours(start, hour);
@@ -640,6 +649,8 @@ function buildBomForecastWeatherPayload(
     isWindForecastPoint.push(Boolean(match && speed !== null));
     visibility.push(null);
     weatherCode.push(match?.weatherCode ?? null);
+    iconDescriptor.push(match?.iconDescriptor ?? null);
+    isNight.push(match?.isNight ?? null);
   }
 
   return {
@@ -652,6 +663,8 @@ function buildBomForecastWeatherPayload(
       is_wind_forecast_point: isWindForecastPoint,
       visibility,
       weather_code: weatherCode,
+      icon_descriptor: iconDescriptor,
+      is_night: isNight,
     },
   };
 }
@@ -859,6 +872,8 @@ async function fetchBomDetailedWindForecast(location: LocationOption): Promise<B
           cardinal: direction ?? 'Calm',
           airTempC: null,
           weatherCode: null,
+          iconDescriptor: null,
+          isNight: null,
         };
       })
       .filter((point): point is BomForecastWindPoint => point !== null && point.speed !== null);
@@ -905,10 +920,6 @@ async function fetchBomThreeHourlyWindForecast(location: LocationOption): Promis
         if (speed === null || Number.isNaN(timestamp.getTime())) {
           return null;
         }
-        if (!isBomDetailedForecastHour(timestamp)) {
-          return null;
-        }
-
         return {
           timestamp: timestamp.toISOString(),
           speed,
@@ -919,6 +930,8 @@ async function fetchBomThreeHourlyWindForecast(location: LocationOption): Promis
           cardinal: direction === null ? 'Calm' : direction === 'CALM' || direction === 'VRB' ? 'Calm' : direction,
           airTempC: parseMaybeNumber(item.temp === undefined ? undefined : String(item.temp)),
           weatherCode: mapBomIconDescriptorToWeatherCode(item.icon_descriptor),
+          iconDescriptor: item.icon_descriptor?.trim().toLowerCase() ?? null,
+          isNight: typeof item.is_night === 'boolean' ? item.is_night : null,
         };
       })
       .filter((point): point is BomForecastWindPoint => point !== null);
@@ -927,11 +940,6 @@ async function fetchBomThreeHourlyWindForecast(location: LocationOption): Promis
   } catch {
     return null;
   }
-}
-
-function isBomDetailedForecastHour(timestamp: Date): boolean {
-  const detailedForecastHours = new Set([1, 4, 7, 10, 13, 16, 19, 22]);
-  return timestamp.getMinutes() === 0 && detailedForecastHours.has(timestamp.getHours());
 }
 
 function mapBomIconDescriptorToWeatherCode(descriptor: string | null | undefined): number | null {
@@ -1079,6 +1087,8 @@ function parseBomDetailedWindForecastTable(
       cardinal: direction === null ? 'Calm' : direction === 'CALM' || direction === 'VRB' ? 'Calm' : direction,
       airTempC: parseMaybeNumber(temperatureCell),
       weatherCode: null,
+      iconDescriptor: null,
+      isNight: null,
     });
   }
 

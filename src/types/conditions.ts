@@ -45,6 +45,8 @@ export interface MarineHourlyPoint {
   swellHeightM: number | null;
   visibilityKm: number | null;
   weatherCode: number | null;
+  iconDescriptor?: string | null;
+  isNight?: boolean | null;
 }
 
 export interface MarineConditionSet {

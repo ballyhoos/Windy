@@ -498,10 +498,14 @@ button {
 .temp-icon {
   width: 15px;
   height: 15px;
+  flex: 0 0 15px;
   display: block;
 }
 
 .temp-icon--air {
+  width: 16px;
+  height: 16px;
+  flex-basis: 16px;
   color: #f5b400;
 }
 
