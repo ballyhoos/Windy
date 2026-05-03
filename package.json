@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build:app": "node scripts/generate-build-version.mjs && tsc -b && vite build",
+    "build:app": "node scripts/generate-build-version.mjs && tsc -b && vite build && npm run build:single-html",
     "build:app:pages": "node scripts/generate-build-version.mjs && tsc -b && vite build --mode gh-pages",
     "build": "npm run build:docs",
     "build:single-html": "node scripts/build-single-html.mjs",
