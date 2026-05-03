@@ -18,6 +18,7 @@ type StatusCardProps = {
   recentLocations: LocationOption[];
   locationOptions: LocationOption[];
   searchingLocations: boolean;
+  findingCurrentLocation: boolean;
 };
 
 const statusMeta = {
@@ -25,7 +26,7 @@ const statusMeta = {
   amber: { label: 'Be careful', color: '#ffb86b' },
   red: { label: "Don't go", color: '#d64045' },
 };
-const loadingMeta = { label: '---', color: '#9aa6b2' };
+const loadingMeta = { label: '---', color: '#d9e1e8' };
 
 export function StatusCard({
   decision,
@@ -40,12 +41,15 @@ export function StatusCard({
   recentLocations,
   locationOptions,
   searchingLocations,
+  findingCurrentLocation,
 }: StatusCardProps) {
   const meta = loading ? loadingMeta : statusMeta[decision.status];
   const direction = getArrowRotation(marine.wind.directionDegrees, marine.wind.cardinal);
   const windSpeedLabel = formatWindSpeed(marine.wind.speed);
   const isCalm = windSpeedLabel === '0';
   const windDirectionLabel = isCalm ? 'Calm' : marine.wind.cardinal;
+  const airTempLabel = loading || marine.airTempC === null ? '--' : `${marine.airTempC}°C`;
+  const windLabel = loading ? '--' : `${windSpeedLabel}kn ${windDirectionLabel}`;
   const currentWeatherCode = marine.hourly.find((point) => point.weatherCode !== null)?.weatherCode ?? null;
   const evaluationText = loading ? '---' : decision.title;
   const reasonsText = loading
@@ -63,6 +67,11 @@ export function StatusCard({
   const trimmedQuery = locationQuery.trim();
   const showSuggestions = isLocationOpen && locationQueryDirty && trimmedQuery.length >= 2;
   const visibleOptions = showSuggestions ? locationOptions : [];
+  const canRenderShoreline =
+    Number.isFinite(marine.location.latitude) &&
+    Number.isFinite(marine.location.longitude) &&
+    marine.location.id !== 'location-unset';
+  const shouldRenderGraph = !loading && hourlyOutlook.length > 0;
   const visibleRecentLocations = recentLocations
     .filter((option, index, array) => array.findIndex((item) => item.id === option.id) === index)
     .slice(0, 3);
@@ -141,7 +150,7 @@ export function StatusCard({
             <LocationIcon />
             <span>{marine.location.name}</span>
           </button>
-          {searchingLocations || loading ? (
+          {searchingLocations || findingCurrentLocation ? (
             <span className="location-chip-spinner" aria-label="Loading" />
           ) : (
             <button
@@ -215,11 +224,11 @@ export function StatusCard({
         <div className="status-hero__metrics">
           <span className="temp-chip">
             <AirTempIcon weatherCode={currentWeatherCode} />
-            <span>{marine.airTempC ?? '--'}°C</span>
+            <span>{airTempLabel}</span>
           </span>
           <span className="temp-chip wind-chip">
             <WindIcon />
-            <span>{`${windSpeedLabel}kn ${windDirectionLabel}`}</span>
+            <span>{windLabel}</span>
           </span>
           {marine.waterTempC !== null && (
             <span className="temp-chip">
@@ -230,9 +239,11 @@ export function StatusCard({
         </div>
 
         <div className="status-hero__signal-wrap">
-          <ShorelineOrientationCircle lat={marine.location.latitude} lon={marine.location.longitude} />
+          {canRenderShoreline && (
+            <ShorelineOrientationCircle lat={marine.location.latitude} lon={marine.location.longitude} />
+          )}
           <div
-            className="status-hero__signal"
+            className={`status-hero__signal ${loading ? 'status-hero__signal--loading' : ''}`}
             style={
               {
                 '--signal-color': meta.color,
@@ -261,7 +272,7 @@ export function StatusCard({
       </div>
 
       <div className={`forecast-gate ${isSubscribed ? '' : 'forecast-gate--locked'}`}>
-        <HourlyOutlook items={hourlyOutlook} embedded />
+        {shouldRenderGraph ? <HourlyOutlook items={hourlyOutlook} embedded /> : null}
         {!isSubscribed && (
           <div className="forecast-gate__overlay" role="region" aria-label="Forecast subscription gate">
             <img

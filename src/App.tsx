@@ -19,6 +19,14 @@ const STORAGE_KEYS = {
 };
 
 const INITIAL_LOCATION = loadStoredLocation();
+const EMPTY_LOCATION: LocationOption = {
+  id: 'location-unset',
+  name: 'Set location',
+  region: '',
+  latitude: 0,
+  longitude: 0,
+};
+const isLocationUnset = (location: LocationOption | null): boolean => !location || location.id === EMPTY_LOCATION.id;
 
 export default function App() {
   const [isSubscribed, setIsSubscribed] = useState<boolean>(loadSubscriptionState());
@@ -26,9 +34,10 @@ export default function App() {
   const [recentLocations, setRecentLocations] = useState<LocationOption[]>(loadRecentLocations());
   const [searchResults, setSearchResults] = useState<LocationOption[]>([]);
   const [conditions, setConditions] = useState<PaddleConditions | null>(
-    INITIAL_LOCATION ? createPlaceholderConditions(INITIAL_LOCATION) : null,
+    createPlaceholderConditions(INITIAL_LOCATION ?? EMPTY_LOCATION),
   );
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(Boolean(INITIAL_LOCATION));
+  const [findingCurrentLocation, setFindingCurrentLocation] = useState(false);
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const searchRequestIdRef = useRef(0);
@@ -69,25 +78,6 @@ export default function App() {
     }
     return buildHourlyOutlook(conditions);
   }, [conditions]);
-
-  useEffect(() => {
-    if (!navigator.geolocation) {
-      return;
-    }
-
-    navigator.geolocation.getCurrentPosition(
-      async (position) => {
-        const latitude = position.coords.latitude;
-        const longitude = position.coords.longitude;
-        const nearest = await resolveNearestLocation(latitude, longitude);
-        setLocation((current) => (isSameLocation(current, nearest) ? current : nearest));
-      },
-      () => {
-        // Keep last known/default location if permission denied or unavailable.
-      },
-      { enableHighAccuracy: false, timeout: 5000, maximumAge: 300000 },
-    );
-  }, []);
 
   async function loadConditions(nextLocation: LocationOption) {
     const locationKey = buildLocationKey(nextLocation);
@@ -185,15 +175,24 @@ export default function App() {
       return;
     }
 
+    setFindingCurrentLocation(true);
     setLoading(true);
     navigator.geolocation.getCurrentPosition(
       async (position) => {
-        const latitude = position.coords.latitude;
-        const longitude = position.coords.longitude;
-        const nearest = await resolveNearestLocation(latitude, longitude);
-        setLocation((current) => (isSameLocation(current, nearest) ? current : nearest));
+        try {
+          const latitude = position.coords.latitude;
+          const longitude = position.coords.longitude;
+          const nearest = await resolveNearestLocation(latitude, longitude);
+          setLocation((current) => (isSameLocation(current, nearest) ? current : nearest));
+        } catch {
+          setLoading(false);
+          setError('Unable to resolve your current location.');
+        } finally {
+          setFindingCurrentLocation(false);
+        }
       },
       () => {
+        setFindingCurrentLocation(false);
         setLoading(false);
         setError('Unable to access your current location.');
       },
@@ -222,7 +221,7 @@ export default function App() {
                 setIsSubscribed(true);
                 window.sessionStorage.setItem(STORAGE_KEYS.isSubscribed, 'true');
               }}
-              loading={loading}
+              loading={loading || isLocationUnset(location)}
               onUseCurrentLocation={handleUseCurrentLocation}
               onSearchLocation={handleSearch}
               onPickLocation={(nextLocation) => {
@@ -232,6 +231,7 @@ export default function App() {
               recentLocations={recentLocations.filter((item) => item.id !== conditions.marine.location.id)}
               locationOptions={searchResults}
               searchingLocations={searching}
+              findingCurrentLocation={findingCurrentLocation}
             />
           </>
         )}
