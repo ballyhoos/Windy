@@ -98,7 +98,7 @@ button {
 }
 
 .status-card {
-  padding: 18px 18px 16px;
+  padding: 12px;
   overflow: hidden;
 }
 
@@ -279,7 +279,7 @@ button {
 
 .status-card__evaluation small {
   display: block;
-  margin-top: 5px;
+  margin-top: 6px;
   color: rgba(31, 50, 68, 0.62);
   font-size: 0.78rem;
   line-height: 1.35;
@@ -288,8 +288,8 @@ button {
 .status-card__evaluation .status-card__updated-at {
   margin-top: 8px;
   color: rgba(31, 50, 68, 0.42);
-  font-size: 0.62rem;
-  line-height: 1.25;
+  font-size: 0.78rem;
+  line-height: 1.35;
 }
 
 .status-card__disclaimer {
@@ -598,7 +598,7 @@ button {
   position: relative;
   width: var(--decision-icon-size);
   aspect-ratio: 1;
-  margin: 26px 0 34px;
+  margin: 30px 0;
 }
 
 .status-hero__signal {
