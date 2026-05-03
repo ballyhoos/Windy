@@ -160,7 +160,8 @@ export function StatusCard({
               className={`sport-selector__pill ${selectedSport === sport.id ? 'sport-selector__pill--active' : ''}`}
               onClick={() => onSelectSport(sport.id)}
             >
-              {sport.label}
+              <span className="sport-selector__label sport-selector__label--desktop">{sport.label}</span>
+              <span className="sport-selector__label sport-selector__label--mobile">{sport.mobileLabel}</span>
             </button>
           ))}
         </div>

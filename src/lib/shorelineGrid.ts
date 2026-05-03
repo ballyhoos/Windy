@@ -18,6 +18,11 @@ export type ShorelineLookupResult = {
   confidence?: number;
 };
 
+export type ShorelineSmoothedLookupResult = ShorelineLookupResult & {
+  spreadDeg?: number;
+  sampleCount?: number;
+};
+
 const REGION_BBOXES: Array<{
   region: ShorelineRegion;
   latMin: number;
@@ -40,6 +45,8 @@ const shorelineLookupCache: Record<string, ShorelineLookupResult> = {};
 
 const MIN_SHORELINE_CONFIDENCE = 0.5;
 const MAX_SHORELINE_DISTANCE_M = 20_000;
+const MAX_BEARING_SPREAD_DEG = 55;
+const MIN_SMOOTHED_SAMPLE_COUNT = 6;
 
 export function getAustralianShorelineRegion(lat: number, lon: number): ShorelineRegion | null {
   for (const box of REGION_BBOXES) {
@@ -128,4 +135,120 @@ export async function getShorelineForLocation(lat: number, lon: number): Promise
   };
   shorelineLookupCache[cacheKey] = result;
   return result;
+}
+
+export async function getSmoothedShorelineForLocation(
+  lat: number,
+  lon: number,
+): Promise<ShorelineSmoothedLookupResult> {
+  const region = getAustralianShorelineRegion(lat, lon);
+  if (!region) return { available: false };
+
+  const grid = await loadRegionalShorelineGrid(region);
+  if (!grid) return { available: false };
+
+  const precision = getKeyPrecision(grid.resolutionDeg);
+  const centerLat = snapToGrid(lat, grid.resolutionDeg);
+  const centerLon = snapToGrid(lon, grid.resolutionDeg);
+  const distanceLimit = Math.min(MAX_SHORELINE_DISTANCE_M, Math.round(grid.maxDistanceKm * 1000));
+
+  const candidates: Array<{
+    seaBearingDeg: number;
+    distanceToCoastM: number;
+    confidence: number;
+    weight: number;
+  }> = [];
+
+  // 5x5 local neighborhood smoothing (no hardcoded place overrides).
+  for (let dLat = -2; dLat <= 2; dLat += 1) {
+    for (let dLon = -2; dLon <= 2; dLon += 1) {
+      const sampleLat = centerLat + dLat * grid.resolutionDeg;
+      const sampleLon = centerLon + dLon * grid.resolutionDeg;
+      const key = `${sampleLat.toFixed(precision)},${sampleLon.toFixed(precision)}`;
+      const cell = grid.cells[key];
+      if (!cell) continue;
+
+      const [seaBearingDeg, distanceToCoastM, confidencePercent] = cell;
+      const confidence = confidencePercent / 100;
+      if (confidence < MIN_SHORELINE_CONFIDENCE || distanceToCoastM > distanceLimit) continue;
+
+      const offsetKm = haversineKm(lat, lon, sampleLat, sampleLon);
+      const weight = confidence * (1 / (1 + offsetKm)) * (1 / (1 + distanceToCoastM / 2000));
+      candidates.push({ seaBearingDeg, distanceToCoastM, confidence, weight });
+    }
+  }
+
+  if (candidates.length === 0) {
+    return { available: false };
+  }
+
+  const centerBearing = weightedCircularMean(candidates.map((item) => ({ deg: item.seaBearingDeg, weight: item.weight })));
+  const filtered = candidates.filter(
+    (item) => smallestAngleDelta(item.seaBearingDeg, centerBearing) <= 60,
+  );
+  const usable = filtered.length >= 4 ? filtered : candidates;
+
+  const smoothedBearing = weightedCircularMean(usable.map((item) => ({ deg: item.seaBearingDeg, weight: item.weight })));
+  const spreadDeg = circularSpreadDeg(usable.map((item) => item.seaBearingDeg), smoothedBearing);
+
+  if (spreadDeg > MAX_BEARING_SPREAD_DEG || usable.length < MIN_SMOOTHED_SAMPLE_COUNT) {
+    return { available: false, spreadDeg, sampleCount: usable.length };
+  }
+
+  const weightTotal = usable.reduce((sum, item) => sum + item.weight, 0);
+  const weightedDistance =
+    weightTotal > 0
+      ? usable.reduce((sum, item) => sum + item.distanceToCoastM * item.weight, 0) / weightTotal
+      : usable.reduce((sum, item) => sum + item.distanceToCoastM, 0) / usable.length;
+  const weightedConfidence =
+    weightTotal > 0
+      ? usable.reduce((sum, item) => sum + item.confidence * item.weight, 0) / weightTotal
+      : usable.reduce((sum, item) => sum + item.confidence, 0) / usable.length;
+
+  return {
+    available: true,
+    seaBearingDeg: smoothedBearing,
+    distanceToCoastM: Math.round(weightedDistance),
+    confidence: weightedConfidence,
+    spreadDeg,
+    sampleCount: usable.length,
+  };
+}
+
+function weightedCircularMean(samples: Array<{ deg: number; weight: number }>): number {
+  let x = 0;
+  let y = 0;
+  for (const sample of samples) {
+    const radians = (sample.deg * Math.PI) / 180;
+    x += Math.cos(radians) * sample.weight;
+    y += Math.sin(radians) * sample.weight;
+  }
+  if (x === 0 && y === 0) return 0;
+  const degrees = (Math.atan2(y, x) * 180) / Math.PI;
+  return ((degrees % 360) + 360) % 360;
+}
+
+function circularSpreadDeg(samples: number[], centerDeg: number): number {
+  if (samples.length <= 1) return 0;
+  return (
+    samples.reduce((sum, deg) => sum + smallestAngleDelta(deg, centerDeg), 0) / samples.length
+  );
+}
+
+function smallestAngleDelta(a: number, b: number): number {
+  const normalizedA = ((a % 360) + 360) % 360;
+  const normalizedB = ((b % 360) + 360) % 360;
+  const raw = Math.abs(normalizedA - normalizedB);
+  return Math.min(raw, 360 - raw);
+}
+
+function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return 6371 * c;
 }

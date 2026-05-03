@@ -530,6 +530,8 @@ async function resolveShoreRelation(
     return 'variable';
   }
 
+  // Keep relation classification on the same shoreline cell source used by the
+  // orientation circle so UI direction + reason text cannot drift apart.
   const shoreline = await getShorelineForLocation(location.latitude, location.longitude);
   if (!shoreline.available || typeof shoreline.seaBearingDeg !== 'number') {
     return 'variable';
@@ -538,13 +540,21 @@ async function resolveShoreRelation(
   // Use the same convention as the UI icon: wind vector points "to".
   // Onshore means wind travels toward land (away from sea bearing).
   const windToDirection = normalizeDegrees(windFromDirectionDegrees + 180);
-  const diffToSea = smallestAngleDelta(windToDirection, shoreline.seaBearingDeg);
-  if (diffToSea >= 145) {
-    return 'onshore';
-  }
-  if (diffToSea <= 35) {
-    return 'offshore';
-  }
+  // Keep shore relation aligned with the rendered sea/land circle.
+  // The current shoreline dataset is visually corrected by +180deg.
+  const visualSeaBearing = normalizeDegrees(shoreline.seaBearingDeg + 180);
+  return classifyShoreRelation(windToDirection, visualSeaBearing);
+}
+
+function classifyShoreRelation(windToDirectionDegrees: number, seaBearingDegrees: number): ShoreRelation {
+  const diffToSea = smallestAngleDelta(windToDirectionDegrees, seaBearingDegrees);
+  // Compare wind-to direction against the sea-facing hemisphere directly.
+  // < 90° means wind is traveling toward sea (offshore), > 90° toward land (onshore).
+  // Keep a narrow neutral band around 90° as cross-shore.
+  const crossShoreBandDeg = 10;
+  if (Math.abs(diffToSea - 90) <= crossShoreBandDeg) return 'cross-shore';
+  if (diffToSea > 90) return 'onshore';
+  if (diffToSea < 90) return 'offshore';
   return 'cross-shore';
 }
 

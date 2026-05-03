@@ -35,6 +35,18 @@ STATE_BBOXES = [
 ]
 STATE_ORDER = [s for s, _ in STATE_BBOXES]
 
+# Coarse coastal windows (lat_min, lat_max, lon_min, lon_max) used to skip deep inland cells.
+# These are intentionally generous to keep coastline coverage while improving generation speed.
+STATE_COASTAL_WINDOWS = {
+    "TAS": [(-44.5, -39.0, 143.0, 149.0)],
+    "VIC": [(-39.5, -33.8, 140.0, 146.8), (-39.5, -37.8, 146.8, 150.5)],
+    "NSW": [(-37.5, -28.0, 149.0, 154.5)],
+    "QLD": [(-29.5, -10.0, 142.5, 154.5), (-13.5, -10.0, 137.0, 142.5)],
+    "SA": [(-38.5, -31.5, 135.0, 141.5), (-35.5, -25.5, 129.0, 136.0)],
+    "WA": [(-35.5, -22.0, 114.0, 129.5), (-22.0, -10.0, 120.0, 129.5)],
+    "NT": [(-26.5, -10.0, 129.0, 138.5)],
+}
+
 
 @dataclass
 class SegmentInfo:
@@ -50,6 +62,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-distance-km", type=float, default=25.0, help="Max coastline distance (default: 25km).")
     parser.add_argument("--land-polygon", default=None, help="Optional land polygon path.")
     parser.add_argument("--source-licence", default="Unknown", help="Source licence string.")
+    parser.add_argument(
+        "--state",
+        default=None,
+        choices=[s.lower() for s in STATE_ORDER],
+        help="Optional single state code to generate (vic|nsw|qld|sa|wa|tas|nt).",
+    )
     return parser.parse_args()
 
 
@@ -139,7 +157,10 @@ def load_land_union(land_path: Optional[str]):
     if gdf.crs is None:
         raise ValueError("Land polygon CRS is missing.")
     gdf_proj = gdf.to_crs(EPSG_AU_PROJECTED)
-    return gdf_proj.geometry.union_all()
+    # Natural Earth land polygons can contain invalid rings for GEOS unary union.
+    # Repair first to avoid TopologyException during union.
+    repaired = gdf_proj.geometry.make_valid()
+    return repaired.union_all()
 
 
 def move_point(point: Point, bearing_deg: float, distance_m: float) -> Point:
@@ -208,6 +229,16 @@ def assign_state(lat: float, lon: float) -> Optional[str]:
     return None
 
 
+def in_coastal_window(state: str, lat: float, lon: float) -> bool:
+    windows = STATE_COASTAL_WINDOWS.get(state)
+    if not windows:
+        return False
+    for lat_min, lat_max, lon_min, lon_max in windows:
+        if lat_min <= lat <= lat_max and lon_min <= lon <= lon_max:
+            return True
+    return False
+
+
 def main() -> None:
     args = parse_args()
     validate_args(args)
@@ -217,21 +248,25 @@ def main() -> None:
 
     print("[shoreline-grid] Loading coastline and preparing segments...")
     segments, source_crs, source_feature_count = load_coast_segments(args.input)
-    tree_geoms = [s.geom for s in segments]
-    tree = STRtree(tree_geoms)
-    segment_index_by_wkb = {geom.wkb: segments[idx] for idx, geom in enumerate(tree_geoms)}
+    active_states = [args.state.upper()] if args.state else STATE_ORDER
 
     print("[shoreline-grid] Loading optional land polygon...")
     land_union = load_land_union(args.land_polygon)
 
     to_projected = Transformer.from_crs(EPSG_WGS84, EPSG_AU_PROJECTED, always_xy=True)
-    lat_values = list(frange(-44.0, -10.0, args.resolution))
-    lon_values = list(frange(112.0, 154.0, args.resolution))
-    total_points = len(lat_values) * len(lon_values)
+    state_grid_values: Dict[str, Tuple[List[float], List[float]]] = {}
+    total_points = 0
+    for state, (lat_min, lat_max, lon_min, lon_max) in STATE_BBOXES:
+        if state not in active_states:
+            continue
+        lat_values = list(frange(lat_min, lat_max, args.resolution))
+        lon_values = list(frange(lon_min, lon_max, args.resolution))
+        state_grid_values[state] = (lat_values, lon_values)
+        total_points += len(lat_values) * len(lon_values)
     max_distance_m = args.max_distance_km * 1000.0
     precision = get_key_precision(args.resolution)
 
-    state_cells: Dict[str, Dict[str, List[int]]] = {s: {} for s in STATE_ORDER}
+    state_cells: Dict[str, Dict[str, List[int]]] = {s: {} for s in active_states}
     skipped_far = 0
     ambiguous_count = 0
     unavailable_count = 0
@@ -239,58 +274,73 @@ def main() -> None:
 
     print("[shoreline-grid] Evaluating grid points...")
     with tqdm(total=total_points, unit="cell") as progress:
-        for lat in lat_values:
-            for lon in lon_values:
-                progress.update(1)
-                x, y = to_projected.transform(lon, lat)
-                point_proj = Point(x, y)
+        for state in active_states:
+            lat_min, lat_max, lon_min, lon_max = dict(STATE_BBOXES)[state]
+            expand_deg = 3.0
+            bbox_wgs84 = box(
+                max(AU_BOUNDS_WGS84[0], lon_min - expand_deg),
+                max(AU_BOUNDS_WGS84[1], lat_min - expand_deg),
+                min(AU_BOUNDS_WGS84[2], lon_max + expand_deg),
+                min(AU_BOUNDS_WGS84[3], lat_max + expand_deg),
+            )
+            coastline_bbox_proj = gpd.GeoSeries([bbox_wgs84], crs=EPSG_WGS84).to_crs(EPSG_AU_PROJECTED).iloc[0]
+            state_segments = [seg for seg in segments if seg.geom.intersects(coastline_bbox_proj)]
+            if not state_segments:
+                continue
+            state_tree_geoms = [s.geom for s in state_segments]
+            state_tree = STRtree(state_tree_geoms)
+            state_segment_index_by_wkb = {geom.wkb: state_segments[idx] for idx, geom in enumerate(state_tree_geoms)}
+            lat_values, lon_values = state_grid_values[state]
+            for lat in lat_values:
+                for lon in lon_values:
+                    progress.update(1)
+                    if not in_coastal_window(state, lat, lon):
+                        continue
+                    x, y = to_projected.transform(lon, lat)
+                    point_proj = Point(x, y)
 
-                nearest_result = tree.nearest(point_proj)
-                if nearest_result is None:
-                    unavailable_count += 1
-                    continue
+                    nearest_result = state_tree.nearest(point_proj)
+                    if nearest_result is None:
+                        unavailable_count += 1
+                        continue
 
-                nearest_geom = None
-                info = None
-                if isinstance(nearest_result, (int,)):
-                    idx = int(nearest_result)
-                    if 0 <= idx < len(segments):
-                        info = segments[idx]
-                        nearest_geom = info.geom
-                elif hasattr(nearest_result, "item"):
-                    idx = int(nearest_result.item())
-                    if 0 <= idx < len(segments):
-                        info = segments[idx]
-                        nearest_geom = info.geom
-                else:
-                    nearest_geom = nearest_result
-                    info = segment_index_by_wkb.get(nearest_geom.wkb)
+                    nearest_geom = None
+                    info = None
+                    if isinstance(nearest_result, (int,)):
+                        idx = int(nearest_result)
+                        if 0 <= idx < len(state_segments):
+                            info = state_segments[idx]
+                            nearest_geom = info.geom
+                    elif hasattr(nearest_result, "item"):
+                        idx = int(nearest_result.item())
+                        if 0 <= idx < len(state_segments):
+                            info = state_segments[idx]
+                            nearest_geom = info.geom
+                    else:
+                        nearest_geom = nearest_result
+                        info = state_segment_index_by_wkb.get(nearest_geom.wkb)
 
-                if info is None or nearest_geom is None:
-                    unavailable_count += 1
-                    continue
+                    if info is None or nearest_geom is None:
+                        unavailable_count += 1
+                        continue
 
-                distance_m = point_proj.distance(nearest_geom)
-                if distance_m > max_distance_m:
-                    skipped_far += 1
-                    continue
+                    distance_m = point_proj.distance(nearest_geom)
+                    if distance_m > max_distance_m:
+                        skipped_far += 1
+                        continue
 
-                sea_bearing, confidence_pct, unambiguous = choose_sea_bearing(
-                    point_proj, info.shoreline_bearing_deg, land_union
-                )
-                if sea_bearing is None:
-                    ambiguous_count += 1
-                    unavailable_count += 1
-                    continue
-                if not unambiguous and land_union is not None:
-                    ambiguous_count += 1
+                    sea_bearing, confidence_pct, unambiguous = choose_sea_bearing(
+                        point_proj, info.shoreline_bearing_deg, land_union
+                    )
+                    if sea_bearing is None:
+                        ambiguous_count += 1
+                        unavailable_count += 1
+                        continue
+                    if not unambiguous and land_union is not None:
+                        ambiguous_count += 1
 
-                state = assign_state(lat, lon)
-                if state is None:
-                    dropped_no_state += 1
-                    continue
-                key = f"{lat:.{precision}f},{lon:.{precision}f}"
-                state_cells[state][key] = [sea_bearing, int(round(distance_m)), int(confidence_pct)]
+                    key = f"{lat:.{precision}f},{lon:.{precision}f}"
+                    state_cells[state][key] = [sea_bearing, int(round(distance_m)), int(confidence_pct)]
 
     source_hash = sha256_file(input_path)
     generated_at = datetime.now(timezone.utc).isoformat()
@@ -313,7 +363,7 @@ def main() -> None:
         },
     }
 
-    for state in STATE_ORDER:
+    for state in active_states:
         cells = state_cells[state]
         runtime_payload = {
             "version": 2,
@@ -342,7 +392,7 @@ def main() -> None:
 
     print(
         "[shoreline-grid] Complete. "
-        + " ".join([f"{s.lower()}={len(state_cells[s])}" for s in STATE_ORDER])
+        + " ".join([f"{s.lower()}={len(state_cells[s])}" for s in active_states])
     )
 
 
