@@ -9,6 +9,7 @@ import type { DecisionResult, LocationOption, MarineConditionSet, SportType } fr
 type StatusCardProps = {
   decision: DecisionResult;
   marine: MarineConditionSet;
+  updatedAt: string;
   hourlyOutlook: HourlyOutlookItem[];
   isSubscribed: boolean;
   onSubscribeUnlock: () => void;
@@ -35,6 +36,7 @@ const loadingMeta = { label: '---', color: '#d9e1e8' };
 export function StatusCard({
   decision,
   marine,
+  updatedAt,
   hourlyOutlook,
   isSubscribed,
   onSubscribeUnlock,
@@ -70,6 +72,7 @@ export function StatusCard({
   const reasonsText = loading
     ? '---'
     : decision.explanationLine;
+  const updatedText = loading ? 'Last updated: --' : `Last updated: ${formatUpdatedAt(updatedAt)}`;
   const [locationQuery, setLocationQuery] = useState(marine.location.name);
   const [isLocationOpen, setIsLocationOpen] = useState(false);
   const [locationQueryDirty, setLocationQueryDirty] = useState(false);
@@ -297,6 +300,7 @@ export function StatusCard({
         <div className="status-card__evaluation">
           <p>{evaluationText}</p>
           <small>{reasonsText}</small>
+          <small className="status-card__updated-at">{updatedText}</small>
         </div>
       </div>
 
@@ -500,6 +504,21 @@ function formatWindSpeed(speed: number | null): string {
   }
 
   return Math.round(speed).toString();
+}
+
+function formatUpdatedAt(updatedAt: string): string {
+  const parsed = new Date(updatedAt);
+  if (Number.isNaN(parsed.getTime())) {
+    return '--';
+  }
+  const now = new Date();
+  const diffMs = Math.max(0, now.getTime() - parsed.getTime());
+  const diffMinutes = Math.floor(diffMs / 60000);
+  if (diffMinutes < 1) return 'just now';
+  if (diffMinutes < 60) return `${diffMinutes}m ago`;
+  const diffHours = Math.floor(diffMinutes / 60);
+  if (diffHours < 24) return `${diffHours}h ago`;
+  return parsed.toLocaleString([], { hour: 'numeric', minute: '2-digit', day: 'numeric', month: 'short' });
 }
 
 function isNightTimestamp(timestamp: string): boolean {

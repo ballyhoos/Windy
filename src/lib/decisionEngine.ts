@@ -276,7 +276,7 @@ export function evaluateConditions(conditions: PaddleConditions, sport: SportTyp
 
   const displayStatus = deriveDisplayStatus(safety, quality, viability);
   const reasonPool = selectReasonsForDisplay(redReasons, amberReasons, safety, quality, viability);
-  const directionReason = buildShoreDirectionReason(conditions);
+  const directionReason = buildShoreDirectionReason(conditions, sport, displayStatus, reasonPool);
   const reasonsWithDirection = directionReason ? [...reasonPool, directionReason] : reasonPool;
   const { primaryReason, secondaryReasons, explanationLine } = buildReasonHierarchy(
     reasonsWithDirection,
@@ -319,16 +319,34 @@ export function evaluateConditions(conditions: PaddleConditions, sport: SportTyp
   };
 }
 
-function buildShoreDirectionReason(conditions: PaddleConditions): DecisionReason | null {
+function buildShoreDirectionReason(
+  conditions: PaddleConditions,
+  sport: SportType,
+  displayStatus: DecisionResult['displayStatus'],
+  existingReasons: DecisionReason[],
+): DecisionReason | null {
   const relation = conditions.marine.wind.shoreRelation;
   if (relation === 'variable') {
+    if (
+      existingReasons.some(
+        (reason) => reason.label === 'Wind direction uncertain' || reason.label === 'Variable wind direction',
+      )
+    ) {
+      return null;
+    }
     return { label: 'Variable wind', severity: 'amber', category: 'uncertainty', priorityWeight: 48 };
   }
   if (relation === 'offshore') {
-    return { label: 'Offshore wind', severity: 'green', category: 'quality', priorityWeight: 8 };
+    if (existingReasons.some((reason) => reason.label.includes('Offshore wind'))) {
+      return null;
+    }
+    if (sport === 'surf') {
+      return { label: 'Wind blowing offshore', severity: 'green', category: 'quality', priorityWeight: 8 };
+    }
+    return { label: 'Wind blowing offshore', severity: 'green', category: 'quality', priorityWeight: 8 };
   }
   if (relation === 'onshore') {
-    return { label: 'Onshore wind', severity: 'green', category: 'quality', priorityWeight: 8 };
+    return { label: 'Wind blowing onshore', severity: 'green', category: 'quality', priorityWeight: 8 };
   }
   if (relation === 'cross-shore') {
     return { label: 'Cross-shore wind', severity: 'green', category: 'quality', priorityWeight: 8 };
@@ -425,7 +443,9 @@ function buildReasonHierarchy(
   quality: DecisionResult['quality'],
   viability: DecisionResult['viability'],
 ): { primaryReason?: DecisionReason; secondaryReasons: DecisionReason[]; explanationLine: string } {
-  const deduped = reasons.filter((reason, index, all) => all.findIndex((item) => item.label === reason.label) === index);
+  const deduped = removeContradictoryReasons(
+    reasons.filter((reason, index, all) => all.findIndex((item) => item.label === reason.label) === index),
+  );
   const sorted = [...deduped].sort((a, b) => (b.priorityWeight ?? 0) - (a.priorityWeight ?? 0));
   const primaryReason = sorted[0];
   const secondaryReasons = sorted.slice(1, 3);
@@ -444,4 +464,23 @@ function buildReasonHierarchy(
     secondaryReasons,
     explanationLine: composed.map((reason) => reason.label).join(' • '),
   };
+}
+
+function removeContradictoryReasons(reasons: DecisionReason[]): DecisionReason[] {
+  const labels = new Set(reasons.map((reason) => reason.label));
+  return reasons.filter((reason) => {
+    if (reason.label === 'Strong wind' && labels.has('Strong offshore wind')) {
+      return false;
+    }
+    if (reason.label === 'Marginal wind' && (labels.has('Strong wind') || labels.has('Strong offshore wind'))) {
+      return false;
+    }
+    if (
+      reason.label === 'Wind blowing offshore' &&
+      (labels.has('Strong offshore wind') || labels.has('Offshore wind risk'))
+    ) {
+      return false;
+    }
+    return true;
+  });
 }

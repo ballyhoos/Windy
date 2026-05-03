@@ -218,6 +218,7 @@ export default function App() {
             <StatusCard
               decision={decision}
               marine={conditions.marine}
+              updatedAt={conditions.updatedAt}
               hourlyOutlook={hourlyOutlook}
               isSubscribed={isSubscribed}
               onSubscribeUnlock={() => {
@@ -257,7 +258,7 @@ export default function App() {
             |
           </span>
           <a
-            href="https://x.com/intent/tweet?text=%40_ballyhoos%20%23windy"
+            href="https://x.com/intent/tweet?text=%40_ballyhoos%20%23windy%20%5BAdd%20Screenshot%5D"
             target="_blank"
             rel="noreferrer"
             className="app-footer__x-link"
