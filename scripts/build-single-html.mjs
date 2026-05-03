@@ -30,6 +30,11 @@ if (existsSync(publicDataPath)) {
 
 let transformed = html;
 const versionMeta = `<meta name="windy-build-version" content="${version}" />`;
+const cacheMetaBlock = [
+  '<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />',
+  '<meta http-equiv="Pragma" content="no-cache" />',
+  '<meta http-equiv="Expires" content="0" />',
+].join('\n    ');
 if (/<meta\s+name=["']windy-build-version["']/i.test(transformed)) {
   transformed = transformed.replace(
     /<meta\s+name=["']windy-build-version["'][^>]*>/i,
@@ -37,6 +42,10 @@ if (/<meta\s+name=["']windy-build-version["']/i.test(transformed)) {
   );
 } else {
   transformed = transformed.replace('</head>', `    ${versionMeta}\n  </head>`);
+}
+
+if (!/<meta\s+http-equiv=["']Cache-Control["']/i.test(transformed)) {
+  transformed = transformed.replace('</head>', `    ${cacheMetaBlock}\n  </head>`);
 }
 
 // Make docs/index.html explicitly resolve to the Windy Pages base path.
