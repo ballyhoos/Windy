@@ -1,5 +1,5 @@
 # Windy
-Windy (BOM-first paddle conditions app)
+Windy (BOM-first multi-sport conditions app)
 
 ## GitHub Pages
 
@@ -80,6 +80,22 @@ VITE_WEATHER_PROXY_BASE_URL=https://windy-bom-proxy.695.workers.dev
 
 - Tide graph renders only when real tide events are returned. No synthetic tide fallback is shown.
 - Station text is hidden in UI; resolved station is logged in browser console (`[Windy] Location: ... | Station: ...`).
+
+## Sports Decision Engine
+
+The app now supports sport-specific evaluation profiles using the same weather/marine payload:
+
+- Paddle
+- Kayak
+- Surf
+- Kite
+
+Implementation notes:
+
+- Sport selection is persisted in localStorage (`windy:selected-sport`).
+- Decision logic is profile-driven in `src/lib/decisionEngine.ts` via `SPORT_PROFILES`.
+- Hourly graph status colors are recalculated for the selected sport.
+- Open water swimming is intentionally out of scope in this phase.
 
 ## Cloudflare Worker Deploy
 

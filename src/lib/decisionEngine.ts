@@ -1,153 +1,386 @@
-import type {
-  DecisionReason,
-  DecisionResult,
-  PaddleConditions,
-} from '../types/conditions';
+import type { DecisionReason, DecisionResult, PaddleConditions, SportType } from '../types/conditions';
 
-type Thresholds = {
-  strongWind: number;
-  cautionWind: number;
-  strongGust: number;
-  cautionGust: number;
-  highSwellM: number;
-  cautionSwellM: number;
-  poorVisibilityKm: number;
-  cautionVisibilityKm: number;
-  coldAirC: number;
-  coldWaterC: number;
+type SportProfile = {
+  id: SportType;
+  label: string;
+  wind: {
+    amberKn?: number;
+    redKn?: number;
+    minimumKn?: number;
+    tooLowKn?: number;
+  };
+  gust: {
+    amberRatio: number;
+    redRatio: number;
+    amberSpreadKn: number;
+    redSpreadKn: number;
+    amberKn: number;
+    redKn: number;
+  };
+  swell: {
+    amberM?: number;
+    redM?: number;
+    requiredMinM?: number;
+    poorBelowM?: number;
+  };
+  offshore: {
+    safetyRisk: boolean;
+    amberKn?: number;
+    redKn?: number;
+    qualityBonus?: boolean;
+  };
+  shore: {
+    offshore?: {
+      safetyAmberKn?: number;
+      safetyRedKn?: number;
+      safetyAlwaysRed?: boolean;
+      qualityBonus?: boolean;
+      qualityBonusMaxKn?: number;
+    };
+    onshore?: {
+      qualityPenaltyKn?: number;
+      safetyRedKn?: number;
+    };
+    crossShore?: {
+      safetyAmberKn?: number;
+      qualityPenaltyKn?: number;
+      qualityBonusKn?: number;
+    };
+    variable?: {
+      safetyAmber?: boolean;
+    };
+  };
+  daylight: {
+    redMinutes: number;
+  };
 };
 
-const thresholds: Thresholds = {
-  strongWind: 12,
-  cautionWind: 8,
-  strongGust: 15,
-  cautionGust: 11,
-  highSwellM: 0.8,
-  cautionSwellM: 0.45,
-  poorVisibilityKm: 5,
-  cautionVisibilityKm: 8,
-  coldAirC: 16,
-  coldWaterC: 18,
+const SPORT_PROFILES: Record<SportType, SportProfile> = {
+  paddle: {
+    id: 'paddle',
+    label: 'Paddle',
+    wind: { amberKn: 12, redKn: 16 },
+    gust: { amberRatio: 1.2, redRatio: 1.3, amberSpreadKn: 5, redSpreadKn: 8, amberKn: 16, redKn: 22 },
+    swell: { amberM: 0.45, redM: 0.8 },
+    offshore: { safetyRisk: true, amberKn: 8, redKn: 12 },
+    shore: {
+      offshore: { safetyAmberKn: 8, safetyRedKn: 12 },
+      crossShore: { safetyAmberKn: 14 },
+      variable: { safetyAmber: true },
+    },
+    daylight: { redMinutes: 90 },
+  },
+  kayak: {
+    id: 'kayak',
+    label: 'Kayak',
+    wind: { amberKn: 15, redKn: 20 },
+    gust: { amberRatio: 1.25, redRatio: 1.4, amberSpreadKn: 6, redSpreadKn: 10, amberKn: 20, redKn: 28 },
+    swell: { amberM: 0.6, redM: 1.0 },
+    offshore: { safetyRisk: true, amberKn: 12, redKn: 16 },
+    shore: {
+      offshore: { safetyAmberKn: 12, safetyRedKn: 16 },
+      crossShore: { safetyAmberKn: 18 },
+      variable: { safetyAmber: true },
+    },
+    daylight: { redMinutes: 90 },
+  },
+  surf: {
+    id: 'surf',
+    label: 'Surf',
+    wind: { amberKn: 20, redKn: 28 },
+    gust: { amberRatio: 1.3, redRatio: 1.5, amberSpreadKn: 8, redSpreadKn: 12, amberKn: 28, redKn: 38 },
+    swell: { poorBelowM: 0.8, redM: 2.5 },
+    offshore: { safetyRisk: false, qualityBonus: true },
+    shore: {
+      offshore: { qualityBonus: true, qualityBonusMaxKn: 28, safetyRedKn: 28 },
+      onshore: { qualityPenaltyKn: 12 },
+      crossShore: { qualityPenaltyKn: 14 },
+      variable: { safetyAmber: false },
+    },
+    daylight: { redMinutes: 60 },
+  },
+  kite: {
+    id: 'kite',
+    label: 'Kite',
+    wind: { tooLowKn: 12, minimumKn: 15, amberKn: 40, redKn: 50 },
+    gust: { amberRatio: 1.35, redRatio: 1.6, amberSpreadKn: 8, redSpreadKn: 12, amberKn: 32, redKn: 42 },
+    swell: { redM: 2.2 },
+    offshore: { safetyRisk: true, redKn: 1 },
+    shore: {
+      offshore: { safetyAlwaysRed: true },
+      crossShore: { qualityBonusKn: 12 },
+      variable: { safetyAmber: true },
+    },
+    daylight: { redMinutes: 75 },
+  },
 };
 
-export function evaluatePaddleConditions(
-  conditions: PaddleConditions,
-): DecisionResult {
+export const SPORT_OPTIONS: Array<{ id: SportType; label: string }> = [
+  { id: 'kayak', label: 'Kayaking' },
+  { id: 'kite', label: 'Kiteboarding' },
+  { id: 'paddle', label: 'Paddle Boarding' },
+  { id: 'surf', label: 'Surfing' },
+];
+
+export function evaluateConditions(conditions: PaddleConditions, sport: SportType): DecisionResult {
+  const profile = SPORT_PROFILES[sport];
   const redReasons: DecisionReason[] = [];
   const amberReasons: DecisionReason[] = [];
-  const triggeredFlags: string[] = [];
-  const { marine, sun } = conditions;
+  const flags: string[] = [];
+  const windKn = Math.max(0, conditions.marine.wind.speed ?? 0);
+  const gustKn = Math.max(0, conditions.marine.wind.gust ?? 0);
+  const gustRatio = windKn > 0 ? gustKn / windKn : 1;
+  const gustSpreadKn = Math.max(0, gustKn - windKn);
+  const swell = Math.max(0, conditions.marine.swellHeightM ?? 0);
+  const visibility = conditions.marine.visibilityKm ?? Number.POSITIVE_INFINITY;
+  let safety: DecisionResult['safety'] = 'green';
+  let quality: DecisionResult['quality'] = 'good';
+  let viability: DecisionResult['viability'] = 'usable';
 
-  if (marine.warnings.some((warning) => warning.active)) {
-    pushReason(redReasons, triggeredFlags, 'red', 'Active marine or weather warning', 'warning');
+  if (conditions.marine.warnings.some((warning) => warning.active)) {
+    push(redReasons, flags, 'red', 'Active weather warning', 'warning');
+  }
+  if (['moderate', 'high'].includes(conditions.marine.forecast.thunderstormRisk)) {
+    push(redReasons, flags, 'red', 'Storm/lightning risk', 'storm');
+  }
+  if (visibility <= 5) {
+    push(redReasons, flags, 'red', 'Poor visibility', 'visibility');
+  } else if (visibility <= 8) {
+    push(amberReasons, flags, 'amber', 'Reduced visibility', 'visibility-caution');
   }
 
-  if (marine.forecast.thunderstormRisk === 'moderate' || marine.forecast.thunderstormRisk === 'high') {
-    pushReason(redReasons, triggeredFlags, 'red', 'Thunderstorm or lightning risk', 'storm');
-  } else if (marine.forecast.thunderstormRisk === 'low') {
-    pushReason(amberReasons, triggeredFlags, 'amber', 'Unsettled weather nearby', 'weather-shift');
-  }
-
-  if ((marine.wind.speed ?? 0) >= thresholds.strongWind) {
-    pushReason(redReasons, triggeredFlags, 'red', 'Strong wind', 'wind');
-  } else if ((marine.wind.speed ?? 0) >= thresholds.cautionWind) {
-    pushReason(amberReasons, triggeredFlags, 'amber', 'Marginal wind', 'wind-caution');
-  }
-
-  if ((marine.wind.gust ?? 0) >= thresholds.strongGust) {
-    pushReason(redReasons, triggeredFlags, 'red', 'Strong gusts', 'gusts');
-  } else if ((marine.wind.gust ?? 0) >= thresholds.cautionGust) {
-    pushReason(amberReasons, triggeredFlags, 'amber', 'Gusty conditions', 'gusts-caution');
-  }
-
-  if (marine.wind.shoreRelation === 'offshore') {
-    if ((marine.wind.speed ?? 0) >= thresholds.cautionWind) {
-      pushReason(redReasons, triggeredFlags, 'red', 'Offshore wind risk', 'offshore-wind');
-    } else {
-      pushReason(amberReasons, triggeredFlags, 'amber', 'Offshore wind', 'offshore-wind');
-    }
-  } else if (marine.wind.shoreRelation === 'cross-shore') {
-    pushReason(amberReasons, triggeredFlags, 'amber', 'Cross-shore wind', 'cross-shore-wind');
-  }
-
-  if (marine.roughWater || (marine.swellHeightM ?? 0) >= thresholds.highSwellM) {
-    pushReason(redReasons, triggeredFlags, 'red', 'High swell or rough water', 'swell');
-  } else if ((marine.swellHeightM ?? 0) >= thresholds.cautionSwellM) {
-    pushReason(amberReasons, triggeredFlags, 'amber', 'Moderate chop or swell', 'swell-caution');
-  }
-
-  if ((marine.visibilityKm ?? Number.POSITIVE_INFINITY) <= thresholds.poorVisibilityKm) {
-    pushReason(redReasons, triggeredFlags, 'red', 'Poor visibility', 'visibility');
-  } else if ((marine.visibilityKm ?? Number.POSITIVE_INFINITY) <= thresholds.cautionVisibilityKm) {
-    pushReason(amberReasons, triggeredFlags, 'amber', 'Visibility is reduced', 'visibility-caution');
+  if ((profile.wind.redKn ?? Number.POSITIVE_INFINITY) <= windKn) {
+    push(redReasons, flags, 'red', 'Strong wind', 'wind-red');
+  } else if ((profile.wind.amberKn ?? Number.POSITIVE_INFINITY) <= windKn) {
+    push(amberReasons, flags, 'amber', 'Marginal wind', 'wind-amber');
   }
 
   if (
-    sun.daylightRemainingMinutes !== null &&
-    sun.daylightRemainingMinutes <= sun.safeReturnBufferMinutes
+    gustKn >= profile.gust.redKn ||
+    (windKn >= (profile.wind.amberKn ?? 0) && gustRatio >= profile.gust.redRatio && gustSpreadKn >= profile.gust.redSpreadKn)
   ) {
-    pushReason(redReasons, triggeredFlags, 'red', 'Not enough daylight to return safely', 'daylight');
+    push(redReasons, flags, 'red', 'Strong gusts', 'gust-red');
+  } else if (
+    gustKn >= profile.gust.amberKn ||
+    (windKn >= (profile.wind.amberKn ?? 0) && gustRatio >= profile.gust.amberRatio && gustSpreadKn >= profile.gust.amberSpreadKn)
+  ) {
+    push(amberReasons, flags, 'amber', 'Gusty conditions', 'gust-amber');
   }
 
-  if ((marine.airTempC ?? 99) <= thresholds.coldAirC || (marine.waterTempC ?? 99) <= thresholds.coldWaterC) {
-    pushReason(amberReasons, triggeredFlags, 'amber', 'Cold air or water temperature', 'temperature');
+  if (conditions.marine.roughWater || (profile.swell.redM !== undefined && swell >= profile.swell.redM)) {
+    push(redReasons, flags, 'red', 'Rough water', 'swell-red');
+  } else if (profile.swell.amberM !== undefined && swell >= profile.swell.amberM) {
+    push(amberReasons, flags, 'amber', 'Moderate chop or swell', 'swell-amber');
   }
 
-  if (marine.forecast.weatherChangingSoon) {
-    pushReason(amberReasons, triggeredFlags, 'amber', 'Weather may change soon', 'forecast-shift');
+  const shore = profile.shore;
+  const relation = conditions.marine.wind.shoreRelation;
+  if (relation === 'variable') {
+    push(amberReasons, flags, 'amber', 'Wind direction uncertain', 'shore-uncertain');
+    if (shore.variable?.safetyAmber) {
+      push(amberReasons, flags, 'amber', 'Variable wind direction', 'shore-variable-amber');
+    }
+  } else if (relation === 'offshore') {
+    if (shore.offshore?.safetyAlwaysRed) {
+      push(redReasons, flags, 'red', 'Offshore wind risk', 'offshore-red');
+    } else {
+      if ((shore.offshore?.safetyRedKn ?? Number.POSITIVE_INFINITY) <= windKn) {
+        push(redReasons, flags, 'red', 'Strong offshore wind', 'offshore-red');
+      } else if ((shore.offshore?.safetyAmberKn ?? Number.POSITIVE_INFINITY) <= windKn) {
+        push(amberReasons, flags, 'amber', 'Offshore wind', 'offshore-amber');
+      }
+      if (
+        shore.offshore?.qualityBonus &&
+        windKn <= (shore.offshore.qualityBonusMaxKn ?? Number.POSITIVE_INFINITY)
+      ) {
+        quality = improveQuality(quality);
+        push(
+          amberReasons,
+          flags,
+          'amber',
+          'Offshore wind helps',
+          'offshore-quality-bonus',
+        );
+      }
+    }
+  } else if (relation === 'cross-shore') {
+    if ((shore.crossShore?.safetyAmberKn ?? Number.POSITIVE_INFINITY) <= windKn) {
+      push(amberReasons, flags, 'amber', 'Cross-shore wind', 'cross-shore-amber');
+    }
+    if ((shore.crossShore?.qualityPenaltyKn ?? Number.POSITIVE_INFINITY) <= windKn) {
+      quality = quality === 'good' ? 'ok' : quality;
+      push(
+        amberReasons,
+        flags,
+        'amber',
+        'Cross-shore affects quality',
+        'cross-shore-quality',
+      );
+    }
+    if ((shore.crossShore?.qualityBonusKn ?? Number.NEGATIVE_INFINITY) <= windKn) {
+      quality = improveQuality(quality);
+      push(amberReasons, flags, 'amber', 'Cross-shore wind preferred', 'cross-shore-quality-bonus');
+    }
+  } else if (relation === 'onshore') {
+    if ((shore.onshore?.safetyRedKn ?? Number.POSITIVE_INFINITY) <= windKn) {
+      push(redReasons, flags, 'red', 'Strong onshore wind', 'onshore-red');
+    }
+    if ((shore.onshore?.qualityPenaltyKn ?? Number.POSITIVE_INFINITY) <= windKn) {
+      quality = quality === 'good' ? 'ok' : quality;
+      push(
+        amberReasons,
+        flags,
+        'amber',
+        'Onshore affects quality',
+        'onshore-quality',
+      );
+    }
   }
 
-  if (redReasons.length > 0) {
-    return {
-      status: 'red',
-      title: "Don't go",
-      sentence: 'Conditions look unsafe for paddle boarding right now.',
-      reasons: redReasons.slice(0, 3),
-      recommendation:
-        'Wait for safer conditions, check local warnings, and choose a more sheltered session later.',
-      triggeredFlags,
-    };
+  if (
+    conditions.sun.daylightRemainingMinutes !== null &&
+    conditions.sun.daylightRemainingMinutes <= profile.daylight.redMinutes
+  ) {
+    push(redReasons, flags, 'red', 'Not enough daylight left', 'daylight');
   }
 
-  if (amberReasons.length > 0) {
-    return {
-      status: 'amber',
-      title: 'Be careful',
-      sentence: 'Conditions are marginal, so extra caution and a shorter plan make sense.',
-      reasons: amberReasons.slice(0, 3),
-      recommendation:
-        'Stay close to shore, wear your leash and PFD, and make a conservative return-time plan.',
-      triggeredFlags,
-    };
+  if (conditions.marine.forecast.weatherChangingSoon) {
+    push(amberReasons, flags, 'amber', 'Weather may shift soon', 'forecast-shift');
   }
+
+  if (sport === 'surf') {
+    if (profile.swell.poorBelowM !== undefined && swell < profile.swell.poorBelowM) {
+      quality = 'poor';
+      push(amberReasons, flags, 'amber', 'Low swell', 'surf-swell-low');
+    }
+  }
+
+  if (sport === 'kite') {
+    if ((profile.wind.tooLowKn ?? -1) > windKn) {
+      viability = 'not-enough';
+      quality = 'poor';
+      push(amberReasons, flags, 'amber', 'Not enough wind', 'kite-low');
+    } else if ((profile.wind.minimumKn ?? -1) > windKn) {
+      viability = 'not-enough';
+      quality = 'poor';
+      push(amberReasons, flags, 'amber', 'Wind a bit light', 'kite-min');
+    }
+    if ((profile.wind.redKn ?? Number.POSITIVE_INFINITY) <= windKn) viability = 'too-much';
+  } else {
+    if ((profile.wind.redKn ?? Number.POSITIVE_INFINITY) <= windKn) viability = 'too-much';
+  }
+
+  if (redReasons.length > 0) safety = 'red';
+  else if (amberReasons.length > 0) safety = 'amber';
+
+  const displayStatus = deriveDisplayStatus(safety, quality, viability);
+  const reasonPool = selectReasonsForDisplay(redReasons, amberReasons, safety, quality, viability);
+  const directionReason = buildShoreDirectionReason(conditions);
+  const reasonsWithDirection = directionReason
+    ? [...reasonPool, directionReason].slice(0, 3)
+    : reasonPool;
 
   return {
-    status: 'green',
-    title: "Let's go!",
-    sentence: 'Conditions look suitable for paddle boarding.',
-    reasons: [
-      { label: 'Light wind', severity: 'green' },
-      { label: 'Calm water', severity: 'green' },
-      { label: 'Enough daylight', severity: 'green' },
-    ],
+    sport,
+    safety,
+    quality,
+    viability,
+    displayStatus,
+    status: displayStatus,
+    title: displayStatus === 'green' ? "Let's go!" : displayStatus === 'amber' ? 'Be careful' : 'Maybe not',
+    sentence:
+      displayStatus === 'green'
+        ? `Conditions look suitable for ${sportLabel(sport)}.`
+        : displayStatus === 'amber'
+        ? `Marginal for ${sportLabel(sport)}.`
+        : `Unsafe for ${sportLabel(sport)} now.`,
+    reasons:
+      reasonsWithDirection.length > 0
+        ? reasonsWithDirection
+        : [
+            { label: 'Conditions in ideal range', severity: 'green' },
+            { label: 'Manageable wind profile', severity: 'green' },
+            { label: 'Enough daylight', severity: 'green' },
+          ],
     recommendation:
-      'Take your leash, PFD, phone, and tell someone where you are going before you launch.',
-    triggeredFlags,
+      displayStatus === 'green'
+        ? 'Keep a conservative plan and monitor for changes.'
+        : displayStatus === 'amber'
+        ? 'Use extra caution, stay conservative, and be ready to return early.'
+        : 'Delay your session and wait for safer conditions.',
+    triggeredFlags: flags,
   };
 }
 
-function pushReason(
+function buildShoreDirectionReason(conditions: PaddleConditions): DecisionReason | null {
+  const relation = conditions.marine.wind.shoreRelation;
+  if (relation === 'variable') {
+    return { label: 'Variable wind', severity: 'amber' };
+  }
+  if (relation === 'offshore') {
+    return { label: 'Offshore wind', severity: 'green' };
+  }
+  if (relation === 'onshore') {
+    return { label: 'Onshore wind', severity: 'green' };
+  }
+  if (relation === 'cross-shore') {
+    return { label: 'Cross-shore wind', severity: 'green' };
+  }
+  return null;
+}
+
+function selectReasonsForDisplay(
+  redReasons: DecisionReason[],
+  amberReasons: DecisionReason[],
+  safety: DecisionResult['safety'],
+  quality: DecisionResult['quality'],
+  viability: DecisionResult['viability'],
+): DecisionReason[] {
+  const positiveLabels = new Set(['Offshore wind helps', 'Cross-shore wind preferred']);
+  const combined = [...redReasons, ...amberReasons];
+
+  if (safety === 'red') {
+    return combined.filter((reason) => !positiveLabels.has(reason.label)).slice(0, 3);
+  }
+
+  if (safety === 'amber' || viability !== 'usable' || quality === 'poor') {
+    return combined.filter((reason) => !positiveLabels.has(reason.label)).slice(0, 3);
+  }
+
+  return combined.slice(0, 3);
+}
+
+function deriveDisplayStatus(
+  safety: DecisionResult['safety'],
+  quality: DecisionResult['quality'],
+  viability: DecisionResult['viability'],
+): DecisionResult['displayStatus'] {
+  if (safety === 'red') return 'red';
+  if (safety === 'amber') return 'amber';
+  if (viability === 'not-enough' || viability === 'too-much') return 'amber';
+  if (quality === 'poor') return 'amber';
+  return 'green';
+}
+
+function improveQuality(current: DecisionResult['quality']): DecisionResult['quality'] {
+  if (current === 'poor') return 'ok';
+  return 'good';
+}
+
+function sportLabel(sport: SportType): string {
+  if (sport === 'kite') return 'kiteboarding/windsurfing';
+  if (sport === 'surf') return 'surfing';
+  if (sport === 'kayak') return 'kayaking';
+  return 'paddle boarding';
+}
+
+function push(
   bucket: DecisionReason[],
-  triggeredFlags: string[],
+  flags: string[],
   severity: DecisionReason['severity'],
   label: string,
   flag: string,
 ): void {
-  if (!bucket.some((reason) => reason.label === label)) {
-    bucket.push({ label, severity });
-  }
-
-  if (!triggeredFlags.includes(flag)) {
-    triggeredFlags.push(flag);
-  }
+  if (!bucket.some((reason) => reason.label === label)) bucket.push({ label, severity });
+  if (!flags.includes(flag)) flags.push(flag);
 }

@@ -1,4 +1,5 @@
 export type DecisionStatus = 'green' | 'amber' | 'red';
+export type SportType = 'paddle' | 'kayak' | 'surf' | 'kite';
 export type ShoreRelation = 'onshore' | 'offshore' | 'cross-shore' | 'variable';
 export type TideState = 'incoming' | 'outgoing' | 'slack' | 'unknown';
 export type WarningSeverity = 'watch' | 'warning' | 'severe';
@@ -104,6 +105,11 @@ export interface DecisionReason {
 }
 
 export interface DecisionResult {
+  sport?: SportType;
+  safety: DecisionStatus;
+  quality: 'poor' | 'ok' | 'good';
+  viability: 'not-enough' | 'usable' | 'too-much';
+  displayStatus: DecisionStatus;
   status: DecisionStatus;
   title: string;
   sentence: string;

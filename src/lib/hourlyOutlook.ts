@@ -1,5 +1,5 @@
-import { evaluatePaddleConditions } from './decisionEngine';
-import type { DecisionStatus, PaddleConditions } from '../types/conditions';
+import { evaluateConditions } from './decisionEngine';
+import type { DecisionStatus, PaddleConditions, SportType } from '../types/conditions';
 
 export interface HourlyOutlookItem {
   timestamp: string;
@@ -30,7 +30,7 @@ type HourlySourcePoint = {
   isInterpolatedWind?: boolean;
 };
 
-export function buildHourlyOutlook(conditions: PaddleConditions): HourlyOutlookItem[] {
+export function buildHourlyOutlook(conditions: PaddleConditions, sport: SportType): HourlyOutlookItem[] {
   const sunriseTemplate = conditions.sun.sunrise ? new Date(conditions.sun.sunrise) : null;
   const sunsetTemplate = conditions.sun.sunset ? new Date(conditions.sun.sunset) : null;
   const hasSunTemplates =
@@ -42,7 +42,7 @@ export function buildHourlyOutlook(conditions: PaddleConditions): HourlyOutlookI
   const liveHourly = (conditions.marine.hourly ?? [])
     .map((point) => ({ ...point, time: new Date(point.timestamp) }))
     .filter((point) => !Number.isNaN(point.time.getTime()));
-  const currentDecision = evaluatePaddleConditions(conditions);
+  const currentDecision = evaluateConditions(conditions, sport);
   const forecastSource = conditions.marine.forecastSourceLabel.startsWith('BOM forecast (worker)');
   const hasForecastAnchors = liveHourly.some((point) => point.isWindForecastPoint === true && point.windSpeed !== null);
   const slots = Array.from({ length: 36 }, (_, index) => addHours(start, index));
@@ -72,9 +72,20 @@ export function buildHourlyOutlook(conditions: PaddleConditions): HourlyOutlookI
     const projected = isCurrentSlot
       ? conditions
       : livePoint
-        ? applyLivePointToConditions(conditions, livePoint, slot, daylightWindow?.sunset ?? null)
-        : projectConditionsForHour(conditions, slot, daylightWindow?.sunset ?? null);
-    const decision = isCurrentSlot ? currentDecision : evaluatePaddleConditions(projected);
+        ? applyLivePointToConditions(
+            conditions,
+            livePoint,
+            slot,
+            daylightWindow?.sunrise ?? null,
+            daylightWindow?.sunset ?? null,
+          )
+        : projectConditionsForHour(
+            conditions,
+            slot,
+            daylightWindow?.sunrise ?? null,
+            daylightWindow?.sunset ?? null,
+          );
+    const decision = isCurrentSlot ? currentDecision : evaluateConditions(projected, sport);
     output.push({
       timestamp: slot.toISOString(),
       status: decision.status,
@@ -219,9 +230,10 @@ function applyLivePointToConditions(
     weatherCode: number | null;
   },
   slot: Date,
+  sunrise: Date | null,
   sunset: Date | null,
 ): PaddleConditions {
-  const daylightRemainingMinutes = calculateDaylightRemainingMinutes(base, slot, sunset);
+  const daylightRemainingMinutes = calculateDaylightRemainingMinutes(base, slot, sunrise, sunset);
   const thunderstormRisk = deriveThunderstormRisk(point.weatherCode);
 
   return {
@@ -273,6 +285,7 @@ function deriveThunderstormRisk(weatherCode: number | null): 'none' | 'low' | 'm
 function projectConditionsForHour(
   base: PaddleConditions,
   slot: Date,
+  sunrise: Date | null,
   sunset: Date | null,
 ): PaddleConditions {
   const now = new Date();
@@ -284,7 +297,7 @@ function projectConditionsForHour(
   const drift = hoursFromNow * 0.8;
   const projectedWind = clamp(Math.round(baseWind + cycle * 3 + drift), 0, 60);
   const projectedGust = clamp(Math.round(baseGust + cycle * 4 + drift * 1.5), projectedWind, 75);
-  const daylightRemainingMinutes = calculateDaylightRemainingMinutes(base, slot, sunset);
+  const daylightRemainingMinutes = calculateDaylightRemainingMinutes(base, slot, sunrise, sunset);
 
   return {
     ...base,
@@ -310,14 +323,23 @@ function projectConditionsForHour(
 function calculateDaylightRemainingMinutes(
   base: PaddleConditions,
   slot: Date,
+  sunrise: Date | null,
   sunset: Date | null,
 ): number | null {
+  if (sunrise && sunset) {
+    if (slot < sunrise || slot > sunset) {
+      return 0;
+    }
+    return Math.max(0, Math.round((sunset.getTime() - slot.getTime()) / 60000));
+  }
+
   if (sunset) {
     return Math.max(0, Math.round((sunset.getTime() - slot.getTime()) / 60000));
   }
 
   return base.sun.daylightRemainingMinutes;
 }
+
 
 function roundToCurrentHour(value: Date): Date {
   const rounded = new Date(value);

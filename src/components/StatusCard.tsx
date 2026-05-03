@@ -3,7 +3,8 @@ import { HourlyOutlook } from './HourlyOutlook';
 import { ShorelineOrientationCircle } from './ShorelineOrientationCircle';
 import forecastSubscribeBg from '../assets/forecast-subscribe-bg.png';
 import type { HourlyOutlookItem } from '../lib/hourlyOutlook';
-import type { DecisionResult, LocationOption, MarineConditionSet } from '../types/conditions';
+import { SPORT_OPTIONS } from '../lib/decisionEngine';
+import type { DecisionResult, LocationOption, MarineConditionSet, SportType } from '../types/conditions';
 
 type StatusCardProps = {
   decision: DecisionResult;
@@ -15,6 +16,8 @@ type StatusCardProps = {
   onUseCurrentLocation: () => void;
   onSearchLocation: (query: string) => Promise<LocationOption[]>;
   onPickLocation: (location: LocationOption) => void;
+  selectedSport: SportType;
+  onSelectSport: (sport: SportType) => void;
   recentLocations: LocationOption[];
   locationOptions: LocationOption[];
   searchingLocations: boolean;
@@ -24,7 +27,7 @@ type StatusCardProps = {
 const statusMeta = {
   green: { label: "Let's go!", color: '#2b8a57' },
   amber: { label: 'Be careful', color: '#ffb86b' },
-  red: { label: "Don't go", color: '#d64045' },
+  red: { label: 'Maybe not', color: '#d64045' },
 };
 const loadingMeta = { label: '---', color: '#d9e1e8' };
 
@@ -38,6 +41,8 @@ export function StatusCard({
   onUseCurrentLocation,
   onSearchLocation,
   onPickLocation,
+  selectedSport,
+  onSelectSport,
   recentLocations,
   locationOptions,
   searchingLocations,
@@ -145,6 +150,22 @@ export function StatusCard({
 
   return (
     <section className={`status-card ${loading ? 'status-card--updating' : ''}`}>
+      <div className="status-card__sport-shelf" aria-label="Sport selector shelf">
+        <div className="sport-selector" role="tablist" aria-label="Sport selector">
+          {SPORT_OPTIONS.map((sport) => (
+            <button
+              key={sport.id}
+              type="button"
+              role="tab"
+              aria-selected={selectedSport === sport.id}
+              className={`sport-selector__pill ${selectedSport === sport.id ? 'sport-selector__pill--active' : ''}`}
+              onClick={() => onSelectSport(sport.id)}
+            >
+              {sport.label}
+            </button>
+          ))}
+        </div>
+      </div>
       <div className="status-hero">
         <div className="location-chip-row">
           <button

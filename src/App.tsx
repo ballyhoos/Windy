@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { StatusCard } from './components/StatusCard';
 import { BUILD_VERSION } from './generated/buildInfo';
-import { evaluatePaddleConditions } from './lib/decisionEngine';
+import { evaluateConditions } from './lib/decisionEngine';
 import { buildHourlyOutlook } from './lib/hourlyOutlook';
 import { fetchSunData } from './lib/sunApi';
 import { fetchTideData } from './lib/tideApi';
@@ -10,12 +10,14 @@ import type {
   DecisionResult,
   LocationOption,
   PaddleConditions,
+  SportType,
 } from './types/conditions';
 
 const STORAGE_KEYS = {
   location: 'paddle-check:last-location',
   recentLocations: 'paddle-check:recent-locations',
   isSubscribed: 'paddle-check:is-subscribed',
+  selectedSport: 'windy:selected-sport',
 };
 
 const INITIAL_LOCATION = loadStoredLocation();
@@ -31,6 +33,7 @@ const isLocationUnset = (location: LocationOption | null): boolean => !location 
 export default function App() {
   const [isSubscribed, setIsSubscribed] = useState<boolean>(loadSubscriptionState());
   const [location, setLocation] = useState<LocationOption | null>(INITIAL_LOCATION);
+  const [selectedSport, setSelectedSport] = useState<SportType>(loadSelectedSport());
   const [recentLocations, setRecentLocations] = useState<LocationOption[]>(loadRecentLocations());
   const [searchResults, setSearchResults] = useState<LocationOption[]>([]);
   const [conditions, setConditions] = useState<PaddleConditions | null>(
@@ -69,15 +72,15 @@ export default function App() {
       return null;
     }
 
-    return evaluatePaddleConditions(conditions);
-  }, [conditions]);
+    return evaluateConditions(conditions, selectedSport);
+  }, [conditions, selectedSport]);
 
   const hourlyOutlook = useMemo(() => {
     if (!conditions) {
       return [];
     }
-    return buildHourlyOutlook(conditions);
-  }, [conditions]);
+    return buildHourlyOutlook(conditions, selectedSport);
+  }, [conditions, selectedSport]);
 
   async function loadConditions(nextLocation: LocationOption) {
     const locationKey = buildLocationKey(nextLocation);
@@ -228,6 +231,11 @@ export default function App() {
                 setLocation(nextLocation);
                 setSearchResults([]);
               }}
+              selectedSport={selectedSport}
+              onSelectSport={(sport) => {
+                setSelectedSport(sport);
+                window.localStorage.setItem(STORAGE_KEYS.selectedSport, sport);
+              }}
               recentLocations={recentLocations.filter((item) => item.id !== conditions.marine.location.id)}
               locationOptions={searchResults}
               searchingLocations={searching}
@@ -266,6 +274,18 @@ export default function App() {
       </div>
     </main>
   );
+}
+
+function loadSelectedSport(): SportType {
+  try {
+    const stored = window.localStorage.getItem(STORAGE_KEYS.selectedSport);
+    if (stored === 'paddle' || stored === 'kayak' || stored === 'surf' || stored === 'kite') {
+      return stored;
+    }
+  } catch {
+    // ignore
+  }
+  return 'paddle';
 }
 
 function loadSubscriptionState(): boolean {
