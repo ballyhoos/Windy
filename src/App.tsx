@@ -240,6 +240,7 @@ export default function App() {
               locationOptions={searchResults}
               searchingLocations={searching}
               findingCurrentLocation={findingCurrentLocation}
+              loadingLocationData={loading && !isLocationUnset(location)}
             />
           </>
         )}
@@ -256,13 +257,13 @@ export default function App() {
             |
           </span>
           <a
-            href="https://x.com/_ballyhoos"
+            href="https://x.com/intent/tweet?text=%40_ballyhoos%20%23windy"
             target="_blank"
             rel="noreferrer"
             className="app-footer__x-link"
-            aria-label="X account @_ballyhoos"
+            aria-label="Send feedback on X"
           >
-            @_ballyhoos
+            Feedback
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path
                 d="M18.244 2H21.5l-7.11 8.129L22.75 22h-6.545l-5.128-6.707L5.21 22H1.95l7.607-8.695L1.5 2h6.712l4.63 6.114L18.244 2Zm-1.14 18h1.803L7.23 3.895H5.293L17.104 20Z"

@@ -102,6 +102,8 @@ export interface PaddleConditions {
 export interface DecisionReason {
   label: string;
   severity: DecisionStatus;
+  category?: 'safety' | 'quality' | 'viability' | 'uncertainty';
+  priorityWeight?: number;
 }
 
 export interface DecisionResult {
@@ -113,6 +115,9 @@ export interface DecisionResult {
   status: DecisionStatus;
   title: string;
   sentence: string;
+  primaryReason?: DecisionReason;
+  secondaryReasons: DecisionReason[];
+  explanationLine: string;
   reasons: DecisionReason[];
   recommendation: string;
   triggeredFlags: string[];

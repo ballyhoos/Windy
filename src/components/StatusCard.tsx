@@ -22,6 +22,7 @@ type StatusCardProps = {
   locationOptions: LocationOption[];
   searchingLocations: boolean;
   findingCurrentLocation: boolean;
+  loadingLocationData: boolean;
 };
 
 const statusMeta = {
@@ -47,6 +48,7 @@ export function StatusCard({
   locationOptions,
   searchingLocations,
   findingCurrentLocation,
+  loadingLocationData,
 }: StatusCardProps) {
   const meta = loading ? loadingMeta : statusMeta[decision.status];
   const direction = getArrowRotation(marine.wind.directionDegrees, marine.wind.cardinal);
@@ -67,10 +69,7 @@ export function StatusCard({
   const evaluationText = loading ? '---' : decision.title;
   const reasonsText = loading
     ? '---'
-    : decision.reasons
-        .slice(0, 3)
-        .map((reason) => reason.label)
-        .join(' · ');
+    : decision.explanationLine;
   const [locationQuery, setLocationQuery] = useState(marine.location.name);
   const [isLocationOpen, setIsLocationOpen] = useState(false);
   const [locationQueryDirty, setLocationQueryDirty] = useState(false);
@@ -179,7 +178,7 @@ export function StatusCard({
             <LocationIcon />
             <span>{marine.location.name}</span>
           </button>
-          {searchingLocations || findingCurrentLocation ? (
+          {searchingLocations || findingCurrentLocation || loadingLocationData ? (
             <span className="location-chip-spinner" aria-label="Loading" />
           ) : (
             <button

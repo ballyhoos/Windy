@@ -205,21 +205,22 @@ export function evaluateConditions(conditions: PaddleConditions, sport: SportTyp
     }
   } else if (relation === 'cross-shore') {
     if ((shore.crossShore?.safetyAmberKn ?? Number.POSITIVE_INFINITY) <= windKn) {
-      push(amberReasons, flags, 'amber', 'Cross-shore wind', 'cross-shore-amber');
+      push(amberReasons, flags, 'amber', 'Cross-shore wind risk', 'cross-shore-amber');
     }
     if ((shore.crossShore?.qualityPenaltyKn ?? Number.POSITIVE_INFINITY) <= windKn) {
       quality = quality === 'good' ? 'ok' : quality;
+      const crossShoreQualityLabel = sport === 'surf' ? 'Cross-shore affects wave quality' : 'Cross-shore affects quality';
       push(
         amberReasons,
         flags,
         'amber',
-        'Cross-shore affects quality',
+        crossShoreQualityLabel,
         'cross-shore-quality',
       );
     }
     if ((shore.crossShore?.qualityBonusKn ?? Number.NEGATIVE_INFINITY) <= windKn) {
       quality = improveQuality(quality);
-      push(amberReasons, flags, 'amber', 'Cross-shore wind preferred', 'cross-shore-quality-bonus');
+      push(amberReasons, flags, 'amber', 'Cross-shore preferred', 'cross-shore-quality-bonus');
     }
   } else if (relation === 'onshore') {
     if ((shore.onshore?.safetyRedKn ?? Number.POSITIVE_INFINITY) <= windKn) {
@@ -276,9 +277,13 @@ export function evaluateConditions(conditions: PaddleConditions, sport: SportTyp
   const displayStatus = deriveDisplayStatus(safety, quality, viability);
   const reasonPool = selectReasonsForDisplay(redReasons, amberReasons, safety, quality, viability);
   const directionReason = buildShoreDirectionReason(conditions);
-  const reasonsWithDirection = directionReason
-    ? [...reasonPool, directionReason].slice(0, 3)
-    : reasonPool;
+  const reasonsWithDirection = directionReason ? [...reasonPool, directionReason] : reasonPool;
+  const { primaryReason, secondaryReasons, explanationLine } = buildReasonHierarchy(
+    reasonsWithDirection,
+    safety,
+    quality,
+    viability,
+  );
 
   return {
     sport,
@@ -294,14 +299,16 @@ export function evaluateConditions(conditions: PaddleConditions, sport: SportTyp
         : displayStatus === 'amber'
         ? `Marginal for ${sportLabel(sport)}.`
         : `Unsafe for ${sportLabel(sport)} now.`,
-    reasons:
-      reasonsWithDirection.length > 0
-        ? reasonsWithDirection
-        : [
-            { label: 'Conditions in ideal range', severity: 'green' },
-            { label: 'Manageable wind profile', severity: 'green' },
-            { label: 'Enough daylight', severity: 'green' },
-          ],
+    primaryReason,
+    secondaryReasons,
+    explanationLine,
+    reasons: primaryReason
+      ? [primaryReason, ...secondaryReasons]
+      : [
+          { label: 'Conditions in ideal range', severity: 'green', category: 'quality', priorityWeight: 10 },
+          { label: 'Manageable wind profile', severity: 'green', category: 'quality', priorityWeight: 9 },
+          { label: 'Enough daylight', severity: 'green', category: 'safety', priorityWeight: 8 },
+        ],
     recommendation:
       displayStatus === 'green'
         ? 'Keep a conservative plan and monitor for changes.'
@@ -315,16 +322,16 @@ export function evaluateConditions(conditions: PaddleConditions, sport: SportTyp
 function buildShoreDirectionReason(conditions: PaddleConditions): DecisionReason | null {
   const relation = conditions.marine.wind.shoreRelation;
   if (relation === 'variable') {
-    return { label: 'Variable wind', severity: 'amber' };
+    return { label: 'Variable wind', severity: 'amber', category: 'uncertainty', priorityWeight: 48 };
   }
   if (relation === 'offshore') {
-    return { label: 'Offshore wind', severity: 'green' };
+    return { label: 'Offshore wind', severity: 'green', category: 'quality', priorityWeight: 8 };
   }
   if (relation === 'onshore') {
-    return { label: 'Onshore wind', severity: 'green' };
+    return { label: 'Onshore wind', severity: 'green', category: 'quality', priorityWeight: 8 };
   }
   if (relation === 'cross-shore') {
-    return { label: 'Cross-shore wind', severity: 'green' };
+    return { label: 'Cross-shore wind', severity: 'green', category: 'quality', priorityWeight: 8 };
   }
   return null;
 }
@@ -336,7 +343,7 @@ function selectReasonsForDisplay(
   quality: DecisionResult['quality'],
   viability: DecisionResult['viability'],
 ): DecisionReason[] {
-  const positiveLabels = new Set(['Offshore wind helps', 'Cross-shore wind preferred']);
+  const positiveLabels = new Set(['Offshore wind helps', 'Cross-shore preferred']);
   const combined = [...redReasons, ...amberReasons];
 
   if (safety === 'red') {
@@ -381,6 +388,60 @@ function push(
   label: string,
   flag: string,
 ): void {
-  if (!bucket.some((reason) => reason.label === label)) bucket.push({ label, severity });
+  if (!bucket.some((reason) => reason.label === label)) {
+    bucket.push({
+      label,
+      severity,
+      category: inferReasonCategory(flag),
+      priorityWeight: inferReasonPriority(flag, severity),
+    });
+  }
   if (!flags.includes(flag)) flags.push(flag);
+}
+
+function inferReasonCategory(flag: string): DecisionReason['category'] {
+  if (flag.startsWith('kite-')) return 'viability';
+  if (flag.includes('quality')) return 'quality';
+  if (flag.includes('uncertain') || flag.includes('variable')) return 'uncertainty';
+  return 'safety';
+}
+
+function inferReasonPriority(flag: string, severity: DecisionReason['severity']): number {
+  if (flag === 'daylight') return 100;
+  if (flag === 'warning' || flag === 'storm') return 98;
+  if (flag === 'offshore-red' || flag === 'wind-red' || flag === 'gust-red' || flag === 'swell-red') return 95;
+  if (flag === 'visibility') return 92;
+  if (severity === 'red') return 90;
+  if (flag.startsWith('kite-')) return 70;
+  if (flag.includes('uncertain') || flag.includes('variable')) return 62;
+  if (flag.includes('quality')) return 40;
+  if (severity === 'amber') return 60;
+  return 10;
+}
+
+function buildReasonHierarchy(
+  reasons: DecisionReason[],
+  safety: DecisionResult['safety'],
+  quality: DecisionResult['quality'],
+  viability: DecisionResult['viability'],
+): { primaryReason?: DecisionReason; secondaryReasons: DecisionReason[]; explanationLine: string } {
+  const deduped = reasons.filter((reason, index, all) => all.findIndex((item) => item.label === reason.label) === index);
+  const sorted = [...deduped].sort((a, b) => (b.priorityWeight ?? 0) - (a.priorityWeight ?? 0));
+  const primaryReason = sorted[0];
+  const secondaryReasons = sorted.slice(1, 3);
+  const composed = primaryReason ? [primaryReason, ...secondaryReasons] : [];
+
+  if (composed.length === 0) {
+    const fallback =
+      safety === 'green' && quality === 'good' && viability === 'usable'
+        ? ['Conditions look suitable', 'Manageable wind', 'Enough daylight']
+        : ['Conditions need caution'];
+    return { primaryReason: undefined, secondaryReasons: [], explanationLine: fallback.join(' • ') };
+  }
+
+  return {
+    primaryReason,
+    secondaryReasons,
+    explanationLine: composed.map((reason) => reason.label).join(' • '),
+  };
 }
