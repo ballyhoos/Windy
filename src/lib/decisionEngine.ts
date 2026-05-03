@@ -292,7 +292,7 @@ export function evaluateConditions(conditions: PaddleConditions, sport: SportTyp
     viability,
     displayStatus,
     status: displayStatus,
-    title: displayStatus === 'green' ? "Let's go!" : displayStatus === 'amber' ? 'Be careful' : 'Maybe not',
+    title: displayStatus === 'green' ? "Let's go!" : displayStatus === 'amber' ? 'Use caution' : 'Maybe not',
     sentence:
       displayStatus === 'green'
         ? `Conditions look suitable for ${sportLabel(sport)}.`
