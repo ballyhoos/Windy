@@ -112,9 +112,9 @@ export async function getShorelineForLocation(lat: number, lon: number): Promise
 
   const cell = grid.cells[key];
   if (!cell) {
-    const unavailable = { available: false } satisfies ShorelineLookupResult;
-    shorelineLookupCache[cacheKey] = unavailable;
-    return unavailable;
+    const fallback = lookupNearbyShoreline(lat, lon, grid);
+    shorelineLookupCache[cacheKey] = fallback;
+    return fallback;
   }
 
   const [seaBearingDeg, distanceToCoastM, confidencePercent] = cell;
@@ -122,9 +122,9 @@ export async function getShorelineForLocation(lat: number, lon: number): Promise
   const distanceLimit = Math.min(MAX_SHORELINE_DISTANCE_M, Math.round(grid.maxDistanceKm * 1000));
 
   if (confidence < MIN_SHORELINE_CONFIDENCE || distanceToCoastM > distanceLimit) {
-    const unavailable = { available: false } satisfies ShorelineLookupResult;
-    shorelineLookupCache[cacheKey] = unavailable;
-    return unavailable;
+    const fallback = lookupNearbyShoreline(lat, lon, grid);
+    shorelineLookupCache[cacheKey] = fallback;
+    return fallback;
   }
 
   const result: ShorelineLookupResult = {
@@ -135,6 +135,56 @@ export async function getShorelineForLocation(lat: number, lon: number): Promise
   };
   shorelineLookupCache[cacheKey] = result;
   return result;
+}
+
+function lookupNearbyShoreline(lat: number, lon: number, grid: ShorelineGridData): ShorelineLookupResult {
+  const precision = getKeyPrecision(grid.resolutionDeg);
+  const centerLat = snapToGrid(lat, grid.resolutionDeg);
+  const centerLon = snapToGrid(lon, grid.resolutionDeg);
+  const distanceLimit = Math.min(MAX_SHORELINE_DISTANCE_M, Math.round(grid.maxDistanceKm * 1000));
+  const relaxedConfidence = 0.35;
+
+  const candidates: Array<{ bearing: number; confidence: number; distanceM: number; weight: number }> = [];
+
+  for (let dLat = -2; dLat <= 2; dLat += 1) {
+    for (let dLon = -2; dLon <= 2; dLon += 1) {
+      const sampleLat = centerLat + dLat * grid.resolutionDeg;
+      const sampleLon = centerLon + dLon * grid.resolutionDeg;
+      const sampleKey = `${sampleLat.toFixed(precision)},${sampleLon.toFixed(precision)}`;
+      const sample = grid.cells[sampleKey];
+      if (!sample) continue;
+
+      const [seaBearingDeg, distanceToCoastM, confidencePercent] = sample;
+      const confidence = confidencePercent / 100;
+      if (confidence < relaxedConfidence || distanceToCoastM > distanceLimit) continue;
+
+      const offsetKm = haversineKm(lat, lon, sampleLat, sampleLon);
+      const weight = confidence * (1 / (1 + offsetKm)) * (1 / (1 + distanceToCoastM / 2500));
+      candidates.push({ bearing: seaBearingDeg, confidence, distanceM: distanceToCoastM, weight });
+    }
+  }
+
+  if (candidates.length === 0) {
+    return { available: false };
+  }
+
+  const totalWeight = candidates.reduce((sum, item) => sum + item.weight, 0);
+  const meanBearing = weightedCircularMean(candidates.map((item) => ({ deg: item.bearing, weight: item.weight })));
+  const meanConfidence =
+    totalWeight > 0
+      ? candidates.reduce((sum, item) => sum + item.confidence * item.weight, 0) / totalWeight
+      : candidates.reduce((sum, item) => sum + item.confidence, 0) / candidates.length;
+  const meanDistance =
+    totalWeight > 0
+      ? candidates.reduce((sum, item) => sum + item.distanceM * item.weight, 0) / totalWeight
+      : candidates.reduce((sum, item) => sum + item.distanceM, 0) / candidates.length;
+
+  return {
+    available: true,
+    seaBearingDeg: meanBearing,
+    confidence: meanConfidence,
+    distanceToCoastM: Math.round(meanDistance),
+  };
 }
 
 export async function getSmoothedShorelineForLocation(
