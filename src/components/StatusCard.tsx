@@ -52,6 +52,7 @@ export function StatusCard({
   findingCurrentLocation,
   loadingLocationData,
 }: StatusCardProps) {
+  const [nowMs, setNowMs] = useState(() => Date.now());
   const meta = loading ? loadingMeta : statusMeta[decision.status];
   const direction = getArrowRotation(marine.wind.directionDegrees, marine.wind.cardinal);
   const windSpeedLabel = formatWindSpeed(marine.wind.speed);
@@ -72,7 +73,7 @@ export function StatusCard({
   const reasonsText = loading
     ? '---'
     : decision.explanationLine;
-  const updatedText = loading ? 'Last updated: --' : `Last updated: ${formatUpdatedAt(updatedAt)}`;
+  const updatedText = loading ? 'Last updated: --' : formatUpdatedAt(updatedAt, nowMs);
   const [locationQuery, setLocationQuery] = useState(marine.location.name);
   const [isLocationOpen, setIsLocationOpen] = useState(false);
   const [locationQueryDirty, setLocationQueryDirty] = useState(false);
@@ -149,6 +150,49 @@ export function StatusCard({
     // Debug visibility without occupying UI space.
     console.info(`[Windy] Location: ${marine.location.name} | Station: ${label}`);
   }, [loading, marine.location.name, marine.sourceLabel]);
+
+  useEffect(() => {
+    if (loading) {
+      return;
+    }
+    const parsed = new Date(updatedAt);
+    const updatedAtMs = parsed.getTime();
+    if (!Number.isFinite(updatedAtMs)) {
+      return;
+    }
+
+    let timeoutId: number | null = null;
+    let cancelled = false;
+
+    const scheduleNextTick = () => {
+      if (cancelled) return;
+      const now = Date.now();
+      const ageMs = Math.max(0, now - updatedAtMs);
+      const ageMinutes = ageMs / 60000;
+      const ageHours = ageMinutes / 60;
+
+      let nextDelayMs: number | null = null;
+      if (ageMinutes < 1) nextDelayMs = 15_000;
+      else if (ageMinutes <= 30) nextDelayMs = 60_000;
+      else if (ageMinutes <= 60) nextDelayMs = 5 * 60_000;
+      else if (ageHours < 24) nextDelayMs = 60 * 60_000;
+
+      if (nextDelayMs === null) return;
+
+      timeoutId = window.setTimeout(() => {
+        setNowMs(Date.now());
+        scheduleNextTick();
+      }, nextDelayMs);
+    };
+
+    setNowMs(Date.now());
+    scheduleNextTick();
+
+    return () => {
+      cancelled = true;
+      if (timeoutId !== null) window.clearTimeout(timeoutId);
+    };
+  }, [loading, updatedAt]);
 
   return (
     <section className={`status-card ${loading ? 'status-card--updating' : ''}`}>
@@ -506,19 +550,20 @@ function formatWindSpeed(speed: number | null): string {
   return Math.round(speed).toString();
 }
 
-function formatUpdatedAt(updatedAt: string): string {
+function formatUpdatedAt(updatedAt: string, nowMs: number): string {
   const parsed = new Date(updatedAt);
   if (Number.isNaN(parsed.getTime())) {
-    return '--';
+    return 'Updated --';
   }
-  const now = new Date();
+  const now = new Date(nowMs);
   const diffMs = Math.max(0, now.getTime() - parsed.getTime());
   const diffMinutes = Math.floor(diffMs / 60000);
-  if (diffMinutes < 1) return 'just now';
-  if (diffMinutes < 60) return `${diffMinutes}m ago`;
+  if (diffMinutes < 1) return 'Updated just now';
+  if (diffMinutes < 60) return `Updated ${diffMinutes}m ago`;
   const diffHours = Math.floor(diffMinutes / 60);
-  if (diffHours < 24) return `${diffHours}h ago`;
-  return parsed.toLocaleString([], { hour: 'numeric', minute: '2-digit', day: 'numeric', month: 'short' });
+  if (diffHours < 24) return `Updated ${diffHours}h ago`;
+  if (diffHours < 48) return 'Updated yesterday';
+  return `Updated ${parsed.toLocaleString([], { hour: 'numeric', minute: '2-digit', day: 'numeric', month: 'short' })}`;
 }
 
 function isNightTimestamp(timestamp: string): boolean {

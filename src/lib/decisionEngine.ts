@@ -117,8 +117,8 @@ const SPORT_PROFILES: Record<SportType, SportProfile> = {
 
 export const SPORT_OPTIONS: Array<{ id: SportType; label: string; mobileLabel: string }> = [
   { id: 'kayak', label: 'Kayaking', mobileLabel: 'Kayak' },
-  { id: 'kite', label: 'Kiteboarding', mobileLabel: 'Kiteboard' },
-  { id: 'paddle', label: 'Paddle Boarding', mobileLabel: 'Paddle Board' },
+  { id: 'kite', label: 'Kiteboarding', mobileLabel: 'Kite' },
+  { id: 'paddle', label: 'Paddle Boarding', mobileLabel: 'Paddle' },
   { id: 'surf', label: 'Surfing', mobileLabel: 'Surf' },
 ];
 
