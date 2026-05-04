@@ -58,7 +58,7 @@ export function StatusCard({
   const windSpeedLabel = formatWindSpeed(marine.wind.speed);
   const isCalm = windSpeedLabel === '0';
   const windDirectionLabel = isCalm ? 'Calm' : marine.wind.cardinal;
-  const airTempLabel = loading || marine.airTempC === null ? '--' : `${marine.airTempC}°C`;
+  const airTempLabel = loading || marine.airTempC === null ? '--' : `${roundToHalf(marine.airTempC)}°C`;
   const windLabel = loading ? '--' : `${windSpeedLabel}kn ${windDirectionLabel}`;
   const currentHourlyPoint = marine.hourly.find((point) => point.weatherCode !== null) ?? marine.hourly[0] ?? null;
   const currentWeatherCode = currentHourlyPoint?.weatherCode ?? null;
@@ -496,6 +496,7 @@ function WaterTempIcon() {
   );
 }
 
+
 function WindIcon() {
   return (
     <svg className="temp-icon temp-icon--wind" viewBox="0 0 24 24" aria-hidden="true">
@@ -548,6 +549,10 @@ function formatWindSpeed(speed: number | null): string {
   }
 
   return Math.round(speed).toString();
+}
+
+function roundToHalf(value: number): number {
+  return Math.round(value * 2) / 2;
 }
 
 function formatUpdatedAt(updatedAt: string, nowMs: number): string {

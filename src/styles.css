@@ -615,6 +615,7 @@ button {
   color: #2fa7a0;
 }
 
+
 .status-hero__signal-wrap {
   --decision-icon-size: min(48vw, 172px);
   position: relative;
